@@ -80,7 +80,7 @@ We'll add our first `Dockerfile` to this example app
 
 In the terminal, run `docker build .` in the app directory to build the image based on this docker file, it'll finish by giving is the id of the image, `=> => writing image sha256:508425c72dbf49410d105bcafdd3062bceac172b64494b1f4d`
 
-`docker run -p 3000:3000 508425c72` will run the image  
+`docker run -p 3000:3000 508425c72` will run the image in a new container
 `-p 3000:3000` is used to publish the port 3000 on port 3000 so we can use `localhost:3000` to access the app, as by default there's no connection between container and host (nb: the termial will be locked by the running web server)
 
 `docker ps` will list all running containers  
@@ -136,7 +136,7 @@ When we re-build an image, only the layers that changed will be re-built
 `CMD` is a special instruction, it's not executed when the image is built but when a container
 is created and started based on that image. `CMD` takes an array of strings
 
-our final `Dockerfile`:
+Our final `Dockerfile`:
 
 ```
 FROM node
@@ -183,9 +183,70 @@ Multiple containers can be started based on one image
 All containers run in isolation, ie. they don't share any application state or written data  
 We need to create and start a Container to start the application which is inside of a container, So it's containers which are executed - both in development and production
 
-#### Lanaging Images & Containers
+#### Managing Images & Containers
 
+`docker run IMAGE_NAME` creates and run a new container
 
+`docker start NAME/ID` restarts a container
+
+`docker rm CONTAINER_NAME` will remove containers, you can't remove a running container, you can pass multiple names spaced with white space
+
+`docker images` lists images
+
+`docker rmi IMAGE_ID` will remove an image, you can only remove an image no longer used by any containers (started or stopped)
+
+`docker image prune` will remove all unused images
+
+`docker run --rm IMAGE_NAME/ID` will automatically remove a container when it exits eg. `docker run -p 3000:80 --rm 63dfe`
+
+`docker images inspect IMAGE_ID` can be used to inspect an image
+
+`docker cp SOURCE CONTAINER_NAME:DEST` (SOURCE is a file or folder) can be used to copy files into a container, eg. `docker cp dummy/. boring_vaughan:/test`. Reverse the source and destination to copy files from a container, eg. `docker cp boring_vaughan:/test  dummy/.`
+
+#### Attached and Detached Containers
+
+When we restart a container, the process finishes immediately - the terminal isn't locked - and the container is running in the background, in detached mode. When we use then run command instead, the terminal is locked and the container run in the foreground, in attached mode.
+
+Attached means we're listening to the output of the container
+
+In our sample app from `2-node-dummy` we're logging info to the console, so running in attached mode is useful
+
+Using `docker run -p 3000:80 -d IMAGE_ID` with `-d` flag will run a container in detached mode
+
+To restart a stopped container in attached mode, use `docker start -a NAME/ID`
+
+We can attach ourself to a detached container again by running `docker container attach CONTAINER_NAME`
+
+Another way to getting access to stderr/stdout from the container is `docker logs CONTAINER_NAME`; `docker logs -f CONTAINER_NAME` enables follow mode to keep on listening to the logs form the container
+
+#### Interactive Mode
+
+`docker run -it IMAGE_ID` will run a container in interactive mode (`-i` keeps stdin open, `-t` allocate a pseudo-TTY, ie. creates a pseudo terminal)
+
+We'll use `3-python-app` as the demo project for this part
+
+first we add a `Dockerfile`
+
+```
+FROM python
+
+WORKDIR /app
+
+COPY . /app
+
+CMD ["python", "rng.py"]
+```
+
+Then we can run the app with `docker run -it IMAGE_ID`
+
+Use `docker start -a -i CONTAINER_NAME` to restart a container in interactive mode
+
+#### Naming and Tagging Images & Containers
+
+Images can be tagged when created with the flag `-t NAME:TAG`, eg. `docker build -t goals:latest .`  
+`name` defines a group of images eg. "node", `tag` defines a specialized image within a group of images eg. "14"
+
+Containers can be named when created with the flag `--name PROVIDED_NAME`, eg. `docker run -p 3000:80 -d --rm --name goalsapp goals:latest`
 
 ### Data & Volumes (in Containers)
 
