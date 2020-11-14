@@ -201,7 +201,7 @@ We need to create and start a Container to start the application which is inside
 
 `docker images inspect IMAGE_ID` can be used to inspect an image
 
-`docker cp SOURCE CONTAINER_NAME:DEST` (SOURCE is a file or folder) can be used to copy files into a container, eg. `docker cp dummy/. boring_vaughan:/test`. Reverse the source and destination to copy files from a container, eg. `docker cp boring_vaughan:/test  dummy/.`
+`docker cp SOURCE CONTAINER_NAME:DEST` (SOURCE is a file or folder) can be used to copy files into a container, eg. `docker cp dummy/. boring_vaughan:/test`. Reverse the source and destination to copy files from a container, eg. `docker cp boring_vaughan:/test dummy/.`
 
 #### Attached and Detached Containers
 
@@ -246,7 +246,38 @@ Use `docker start -a -i CONTAINER_NAME` to restart a container in interactive mo
 Images can be tagged when created with the flag `-t NAME:TAG`, eg. `docker build -t goals:latest .`  
 `name` defines a group of images eg. "node", `tag` defines a specialized image within a group of images eg. "14"
 
+To rename an image use `docker tag OLD_NAME NEW_NAME`, it'll create a clone of the old image under the new name
+
 Containers can be named when created with the flag `--name PROVIDED_NAME`, eg. `docker run -p 3000:80 -d --rm --name goalsapp goals:latest`
+
+#### Sharing Images
+
+We could share a `Dockerfile` and have people run `docker build .` but we'd need to share the entire app folder so others can build it!!
+
+Another possibility is to share a built image
+
+Sharing can be done through Docker Hub or a Private Registery
+
+To share an image, use `docker push IMAGE_NAME`, the image name/tag must include the repository name/url  
+we'll also need to create a repository on [docker hub](https://hub.docker.com/repository/create)  
+and give our local image the name of the repository:
+
+```
+docker tag node_assignment kevinlabtani/node-hello-world
+docker push kevinlabtani/node-hello-world
+```
+
+nb: we'll need to be logged in with `docker login` to be able to push
+
+To use an image, use `docker pull IMAGE_NAME`, this is done automatically if you just `docker run IMAGE_NAME` and the image wasn't pulled before
+
+```
+docker pull kevinlabtani/node-hello-world
+```
+
+IMAGE_NAME Needs to be HOST:NAME to talk to private registry  
+
+docker will not check if the images we have locally are the latest version available, we need to manually run `docker pull` to update an image  
 
 ### Data & Volumes (in Containers)
 
