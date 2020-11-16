@@ -275,11 +275,160 @@ To use an image, use `docker pull IMAGE_NAME`, this is done automatically if you
 docker pull kevinlabtani/node-hello-world
 ```
 
-IMAGE_NAME Needs to be HOST:NAME to talk to private registry  
+IMAGE_NAME Needs to be HOST:NAME to talk to private registry
 
-docker will not check if the images we have locally are the latest version available, we need to manually run `docker pull` to update an image  
+docker will not check if the images we have locally are the latest version available, we need to manually run `docker pull` to update an image
 
 ### Data & Volumes (in Containers)
+
+There a different kinds of data:
+
+- Application data (souce code and environment) is stored in images and _read-only_
+
+  - Written & provided by us
+  - Added to image and container in build phase
+  - “Fixed”: Can’t be changed once image is built
+
+- Temporary app data is stored in containers and read-write but temporary
+
+  - Fetched/Produced in running container
+  - Stored in memory or temporary files
+  - Dynamic and changing, but cleared regularly
+
+- Permanent app data is stored in containers and volumes and read-write an dpermanent
+  - Fetched/Produced in running container
+  - Stored in files or a database
+  - Must not be lost if container stops/restarts
+
+#### Example
+
+We'll be working with `5-data-volumes` for this part, first we'll dockerize it by writing a `Dockerfile` and building an image `docker build -t feedback-node-app .` and start the container `docker run -p 3000:80 -d --name feedback-app --rm feedback-node-app`
+
+The app will work, if we write a feedback message title "awesome", we'll then be able to see it at http://localhost:3000/feedback/awesome.txt; the new file `awesome.txt` isn't saved locally though
+
+If we keep the same container - by creating it without the `--rm` flag - create a file and then stop and restart the container, the new files will still be there though, that extra data is saved in the container layer of the container (the new files are in the file system of the container)
+
+So we have two problems:
+
+1. data written in a container doesn't persist (when the container is deleted)
+2. the container can't interact with the host filesystem
+
+The solution to these problems are, resp.
+
+1. Volumes
+2. Bind Mounts
+
+#### Volumes
+
+Volumes are folders on your host machine hard drive which are mounted into containers
+
+Volumes persist if a container shuts down. If a container (re-)starts and mounts a volume, any data inside of that volume is available in the container
+
+A container can write data into a volume and read data from it
+
+To add a volume to our container, add an instruction to the `Dockerfile`
+
+```
+VOLUME [ "/app/feedback" ]
+```
+
+We use the path inside of our container which should be map to a folder outside of the container and where data should persists, docker will control that folder outside, rebuild the image afterwards `docker build -t feedback-node-app:volumes .` and run it, when we try to leave feedback, the container crashes! It's actually the `fs.rename` method in our app that causes an issue, we'll replace it with `fs.copyFile` and delete the tempFile after instead.
+
+Now if we stop, remove and then create a new container... the data is still not persisting!
+
+There are actually two types of volumes:
+
+- Anonymous Volumes
+- Named Volumes
+
+In both cases, A defined path in the container is mapped to the created volume/mount; and Docker sets up a folder/path on out host machine, the exact location is unknown to us. The volumes are managed via `docker volume` commands.
+
+`docker volume ls` will list the volumes currenctly managed by docker, currently docker uses an anonymous volume to deal with our app data, but if we stop the container, that anonymous volume is deleted; anonymous volumes only exist as long as the container exist
+
+Named volumes persist after container shutdown, that makes htem great for data which should be persistent but which we don’t need to edit directly
+
+We can't create named volumes inside of the `Dockerfile`, so we'll remove the `VOLUME [ "/app/feedback" ]` instruction and rebuild the image. Instead we have to create a named volume when we run a container with the flag `-v NAME:/PATH/INSIDE/CONTAINER`, `docker run -p 3000:80 -d --name feedback-app -v feedback:/app/feedback --rm feedback-node-app:volumes`. Now if we stop, delete and rerun a new container with the same volume, the data will finally persists!
+
+nb: anonymous volumes are removed automatically when we start/run a container with the `--rm` flag. If we start a container without that option, the anonymous volume will not be removed, even if we remove the container later. We can clear anonymous volumes via `docker volume rm VOL_NAME` or `docker volume prune`
+
+nb: we can also create anonymous volumes on the comman line, `docker run –v /app/data …`
+
+#### Bind Mounts
+
+With bind mounts, we define a folder/path on our host machine. These are great for persistent, editable (by us) data (e.g. source code), so we use them to provide "live data" to the container, without needing to rebuild
+
+We can create a bind mount with the flag `–v /path/to/code:/app/code`, path/to/code need to be the absolute path, and we'll bind the entire app folder, `docker run -p 3000:80 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app" --rm feedback-node-app:volumes` (put the abs. path between quotes " if the path has special chars or spaces), we can also use `-v $(pwd):/app` instead
+
+As of now it crashes and shut down immediately! , let's rerun it without the `-rm` flag so we can check the logs of the stopped container, and we see `Error: Cannot find module 'express'`
+
+The problem is that we bind the entire app folder and it then overwrite the app folder inside of the container with our local folder, and that local folder don't have the node_modules folder so the `RUN` command from the `Dockerfile` is rendered worthless, docker will not overwrite our localhost folder, it's the opposite that happens. To tell docker that there are certain things that should not be overwritten in the container file system, we add an anonymous volume to the run command: `docker run -p 3000:80 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app" -v /app/node_modules --rm feedback-node-app:volumes`. Docker evaluates all volumes we set to a container, and if there are clashes, the longer internal path wins
+
+Now if we change something in our internal files, eg. edit `fedback.html` and then reload the page, the change takes effect without having to create and run a new image
+
+If we change something in the `server.js`, eg. add a `console.log`, we need to add nodemon to see the logs with `docker logs feedback-app` as the code in `server.js` is executed by the node runtime (the alternative is to stop de container and restart/recreate one)
+
+#### Volumes - Comparison
+
+|                       Anonymous Volumes                        |                         Named Volumes                          |                           Bind Mounts                            |
+| :------------------------------------------------------------: | :------------------------------------------------------------: | :--------------------------------------------------------------: |
+|          Created specifically for a single container           |    Created in general – not tied to any specific container     | Location on host file system, not tied to any specific container |
+|   Survives container shutdown / restart unless --rm is used    | Survives container shutdown / restart – removal via Docker CLI |    Survives container shutdown / restart – removal on host fs    |
+|              Can not be shared across containers               |                Can be shared across containers                 |                 Can be shared across containers                  |
+| Since it’s anonymous, it can’t be re-used (even on same image) |      Can be re-used for same container (across restarts)       |       Can be re-used for same container (across restarts)        |
+
+#### Read-Only Volumes
+
+The container isn't able to write to the app folder, even with a bind mount, we can enforce this by turning the bind mount into a read only volume by adding an extra `:ro` to the bind mount command, but since we write to some of those folders from inside the container, we'll need to specify another sub-volume to allow that, we have a named volume for /app/feedback already, we need to add one for the temp folder, and we'll use an anonymous volume `docker run -p 3000:80 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:volumes`
+
+#### Managing Volumes
+
+`docker volume ls` to list volumes
+`docker volume create` to create a volume
+`docker volume inspect VOL_NAME` to display detailed information on a volume
+`docker volume remove VOL_NAME` to remove a volume
+`docker volume prune` to remove unused volumes
+
+#### COPY
+
+We still `COPY . .` (ie. copy everything) in our `Dockerfile` even though we bind the entire app, it's not actually necessary right now, but the `docker run` command we currently run with the bind mount is used for development purpose so we can change our code without having to rebuild the image every time, once we're done with developing and want to host our app in production, we won't run it with a bind mount, so we do need to keep the `COPY` command
+
+#### .dockerignore
+
+we can add a `.dockerignore` file to specify which folders and file shouldn't be copied with a `COPY` command
+
+#### ARGuments & ENVironment Variables
+
+Docker supports build-time ARGuments and runtime ENVironment variables
+
+- Runtime ENVironment
+  - Available inside of Dockerfile & in application code
+  - Set via ENV in Dockerfile or via `--env KEY=VALUE` on `docker run`
+
+Let's change our port in the example app to use an env variable, `app.listen(process.env.PORT);` and update the `Dockerfile` to set a default environment variable
+
+```
+ENV PORT 80
+
+EXPOSE $PORT
+```
+
+Now we rebuild, `docker build -t feedback-node-app:env .` and runthe container again, `docker run -p 3000:80 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:env`
+
+We don't have to stick to the default ENV variable, we can use the `--env KEY=VALUE` flag to run the app on another port, `docker run -p 3000:8000 --env PORT=8000 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:env`
+
+`-e` also works as a shortcut for `--env`, if we have more than one env varialbe, we simply add multiple flags
+
+We can also specify a file that contains the env variables, eg if we have a `.env` file, run the container with `--env-file ./.env`, `docker run -p 3000:8000 --env-file ./.env -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:env`
+
+Using a `.env` file is better for security than including secure data directly into the `Dockerfile`. nb: otherwise, the values are "baked into the image" and everyone can read these values via `docker history IMAGE`
+
+- Build-time ARGuments
+  - Available inside of Dockerfile, NOT accessible in CMD or any application code
+  - Set on image build (docker build) via `--build-arg  KEY=VALUE`
+
+Let's lock in the default port value with a build time argument, in our `Dockerfile`, we add `ARG DEFAULT_PORT=80`, this argument can't be used on the `CMD` instruction, but it can be used on the other instructions, eg, `ENV PORT $DEFAULT_PORT`, now we can set a dynamic arg that is used as a default value for the dynamic env variable for the port! Let's rebuild, `docker build -t feedback-node-app:web .`, and if we wanted to change the default value of the arg, we build again with the `--build-arg KEY=VALUE` flag, `docker build -t feedback-node-app:dev --build-arg DEFAULT_PORT=8000 .`
+
+In the `Dockerfile`, remember that all subsequent layer are rerun when we modify one layer, so it's best to put the `ARG` and `ENV` after the `RUN npm install` so we don't reinstall all packages everytime we pass in a new default ARG
 
 ### Containers & Networking
 
