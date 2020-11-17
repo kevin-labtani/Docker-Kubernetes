@@ -4,15 +4,15 @@ Projet créé le 12 Novembre 2020, dans le but de'apprendre à utiliser Docker.
 
 Le projet est basé sur le cours de Docker de [Academind](https://www.udemy.com/course/docker-kubernetes-the-practical-guide/)
 
-- [Getting Started & Overview](#Getting-Started-&-Overview)
+- [Getting Started & Overview](#Getting-Started--Overview)
 - [Foundation](#Foundation)
-  - [Images & Containers](#Images-&-Containers)
-  - [Data & Volumes (in Containers)](<#Data-&-Volumes-(in-Containers)>)
-  - [Containers & Networking](#Containers-&-Networking)
+  - [Images & Containers](#images--containers)
+  - [Data & Volumes (in Containers)](#data--volumes-in-containers)
+  - [Containers & Networking](#Containers--Networking)
 - [Real Life Scenarios](#Real-Life-Scenarios)
   - [Multi-Container Projects](#Multi-Container-Projects)
   - [Using Docker-Compose](#Using-Docker-Compose)
-  - [“Utility Containers”](#“Utility-Containers”)
+  - [“Utility Containers”](#Utility-Containers)
   - [More Complex Setups](#More-Complex-Setups)
   - [Deploying Docker Containers](#Deploying-Docker-Containers)
 
