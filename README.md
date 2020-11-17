@@ -6,6 +6,15 @@ Le projet est basé sur le cours de Docker de [Academind](https://www.udemy.com/
 
 - [Getting Started & Overview](#Getting-Started-&-Overview)
 - [Foundation](#Foundation)
+  - [Images & Containers](#Images-&-Containers)
+  - [Data & Volumes (in Containers)](<#Data-&-Volumes-(in-Containers)>)
+  - [Containers & Networking](#Containers-&-Networking)
+- [Real Life Scenarios](#Real-Life-Scenarios)
+  - [Multi-Container Projects](#Multi-Container-Projects)
+  - [Using Docker-Compose](#Using-Docker-Compose)
+  - [“Utility Containers”](#“Utility-Containers”)
+  - [More Complex Setups](#More-Complex-Setups)
+  - [Deploying Docker Containers](#Deploying-Docker-Containers)
 
 ## Getting Started & Overview
 
@@ -424,7 +433,7 @@ Using a `.env` file is better for security than including secure data directly i
 
 - Build-time ARGuments
   - Available inside of Dockerfile, NOT accessible in CMD or any application code
-  - Set on image build (docker build) via `--build-arg  KEY=VALUE`
+  - Set on image build (docker build) via `--build-arg KEY=VALUE`
 
 Let's lock in the default port value with a build time argument, in our `Dockerfile`, we add `ARG DEFAULT_PORT=80`, this argument can't be used on the `CMD` instruction, but it can be used on the other instructions, eg, `ENV PORT $DEFAULT_PORT`, now we can set a dynamic arg that is used as a default value for the dynamic env variable for the port! Let's rebuild, `docker build -t feedback-node-app:web .`, and if we wanted to change the default value of the arg, we build again with the `--build-arg KEY=VALUE` flag, `docker build -t feedback-node-app:dev --build-arg DEFAULT_PORT=8000 .`
 
@@ -432,12 +441,82 @@ In the `Dockerfile`, remember that all subsequent layer are rerun when we modify
 
 ### Containers & Networking
 
+In many applications, we'll need more than one container as it's hard to configure a container that does more than one "main thing" (eg. run a web server AND a database) and it's considered a good practice to focus each container on one main task.
+
+Containers need to communicate
+
+- with each other
+- with the host machine
+- with the world wide web
+
+We'll be working with `6-networks` for this part, an api based on swapi with a db implemented (MongoDB needs to be installed locally to be able to follow along)
+
+#### Communicating with the World Wide Web
+
+Our example app uses axios to send a web request to the star wars api, ie. there's http communication between our app and a website
+
+Our `Dockerfile` is a standard dockerfile for conainerizing a node app, so we can just build n image with `docker build -t favorite-node .` and run a container with `docker run --name favorites -d --rm -p 3000:3000 favorite-node`. We do not need a volume as we don't need anything to survive except for the data that is stored in the db, which is not part of this container
+
+As of now, our app crashes (we need to run it in non detached mode to see the error, or not with the --rm falg and then look at the logs), we get a mongoDB connect error as the container can't "talk" to the mongoDB running on our localhost
+
+If we temporarily remove the connection to the db `mongoose.connect(...)` and rebuild the image and rerun the container, the container now doesn't crashes we can use Postman to check that the `/movies` and `/people` endpoints work fine by sending GET request to `http://localhost:3000/movies` and `http://localhost:3000/people`. The other endpoint `/favorites` won't work as we need our DB
+
+Communicating with the world wide web works out of the box with docker!
+
+#### Communicating with the Local Host Machine
+
+Our example app uses MongoDB to fetch and store data in our own db, ie. there's communication between our app and a service running on our host machine  
+nb: Communicating to the Host Machine typically is a requirement during development, eg. because we're running a development database on our machine
+
+We add the `mongoose.connect(...)` code back in our code and will now make our app communicate with the locally installed MongoDB database
+
+For communication between the dockerized app and our localhost, we need to change the code in the app, specifically the address mongoose tries to connect to, from `"mongodb://localhost:27017/swfavorites"` to `"mongodb://host.docker.internal:27017/swfavorites"`, and docker will do the rest "under the hood" (we need to rebuild and rerun of course)
+
+`host.docker.internal` is a special address/identifier which is translated to the IP address of
+the machine hosting the container by bocker
+
+#### Communicating with Other Containers
+
+What if we had another container with a service (database,...) we want to comunicate with from our main app container?  
+Our example app is a great use case as it would be best to have the MongoDB in a separate container from our main nodejs app
+
+First we need a second container for our MongoDB, there's an [official mongoDB image](https://hub.docker.com/_/mongo) on Docker Hub, we'll run `docker run -d --name mongodb mongo` to pull and spin up a container with a MongoDB database
+
+Then, we'll alter our app code so that it connects to that containerized db, `docker container inspect mongodb` will give us the IP address of the running MongoDB container under the `"IPAddress"` key; so we can now change the address mongoose tries to connect to this IP address, eg. `"mongodb://172.17.0.2:27017/swfavorites"`
+
+After an image rebuild and container rerun, our app now works and the app container is connected to the mongodb container, we can use Postman to test the GET and POST routes to the `/favorites` endpoint
+
+This isn't convenient though, as we have to look up the IP address and it will change everytime we rerun the db container, forcing us to change our code and rebuild an image
+
+#### Docker Networks
+
+With Docker, we can create networks via `docker network create NETWORK_NAME` and you can then attach multiple Containers to one and the same network
+
+First, we create our network, `docker network create favorites-net`; `docker network ls` can be used to list all existing networks
+
+Then, we'll start our mongodb container on that network with `docker run -d --name mongodb --network favorites-net mongo`
+
+Finally, in our app, we can now change the address mongoose tries to connect to, to `"mongodb://mongodb:27017/swfavorites"` (we're using the name of the mongoDB container as the address, `mongodb`) and docker will translate the name of the MongoDB container to the IP address "under the hood" as long as both containers are on the same network. After an image rebuild `docker build -t favorite-node .`, we can run a container with the `--network NAME` flag, `docker run --name favorites --network favorites-net --rm -d -p 3000:3000 favorite-node`; we can use Postman or check the logs with ` docker logs favorite` to see that our app works
+
+Use `docker network prune` or `docker rm NETWORK_NAME` to remove docker networks
+
+nb: We don't have to publish ports from our mongoDB container as it's just another container that needs to connect to it
+
+nb: Docker Networks actually support different kinds of "Drivers" which influence the behavior of the network, the default driver is the "bridge" driver
+
+nb: right now we lose all the data from the db when the MongoDB container is stopped, this is something we can (and will) solve with volumes
+
 ## Real Life Scenarios
 
-Multi-Container Projects  
-Using Docker-Compose  
-“Utility Containers”  
-Deploying Docker Containers
+### Multi-Container Projects
+
+### Using Docker-Compose
+
+### “Utility Containers”
+
+### More Complex Setups
+
+### Deploying Docker Containers
 
 ## Kubernetes
 
