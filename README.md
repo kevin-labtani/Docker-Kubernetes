@@ -304,7 +304,7 @@ There a different kinds of data:
   - Stored in memory or temporary files
   - Dynamic and changing, but cleared regularly
 
-- Permanent app data is stored in containers and volumes and read-write an dpermanent
+- Permanent app data is stored in containers and volumes and read-write and permanent
   - Fetched/Produced in running container
   - Stored in files or a database
   - Must not be lost if container stops/restarts
@@ -313,7 +313,7 @@ There a different kinds of data:
 
 We'll be working with `5-data-volumes` for this module, first we'll dockerize it by writing a `Dockerfile` and building an image `docker build -t feedback-node-app .` and start the container `docker run -p 3000:80 -d --name feedback-app --rm feedback-node-app`
 
-The app will work, if we write a feedback message title "awesome", we'll then be able to see it at http://localhost:3000/feedback/awesome.txt; the new file `awesome.txt` isn't saved locally though
+The app will work, if we write a feedback message title "awesome", we'll then be able to see it at http://localhost:3000/feedback/awesome.txt; the new file `awesome.txt` isn't saved locally though and is lost if we get rid of the container
 
 If we keep the same container - by creating it without the `--rm` flag - create a file and then stop and restart the container, the new files will still be there though, that extra data is saved in the container layer of the container (the new files are in the file system of the container)
 
@@ -341,7 +341,7 @@ To add a volume to our container, add an instruction to the `Dockerfile`
 VOLUME [ "/app/feedback" ]
 ```
 
-We use the path inside of our container which should be map to a folder outside of the container and where data should persists, docker will control that folder outside, rebuild the image afterwards `docker build -t feedback-node-app:volumes .` and run it, when we try to leave feedback, the container crashes! It's actually the `fs.rename` method in our app that causes an issue, we'll replace it with `fs.copyFile` and delete the tempFile after instead.
+We use the path inside of our container which should be mapped to a folder outside of the container and where data should persists, docker will control that folder outside, rebuild the image afterwards `docker build -t feedback-node-app:volumes .` and run it, when we try to leave feedback, the container crashes! It's actually the `fs.rename` method in our app that causes an issue, we'll replace it with `fs.copyFile` and delete the tempFile after instead.
 
 Now if we stop, remove and then create a new container... the data is still not persisting!
 
@@ -372,7 +372,7 @@ As of now it crashes and shut down immediately! , let's rerun it without the `-r
 
 The problem is that we bind the entire app folder and it then overwrite the app folder inside of the container with our local folder, and that local folder don't have the node_modules folder so the `RUN` command from the `Dockerfile` is rendered worthless, docker will not overwrite our localhost folder, it's the opposite that happens. To tell docker that there are certain things that should not be overwritten in the container file system, we add an anonymous volume to the run command: `docker run -p 3000:80 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app" -v /app/node_modules --rm feedback-node-app:volumes`. Docker evaluates all volumes we set to a container, and if there are clashes, the longer internal path wins
 
-Now if we change something in our internal files, eg. edit `fedback.html` and then reload the page, the change takes effect without having to create and run a new image
+Now if we change something in our internal files, eg. edit `feedback.html` and then reload the page, the change takes effect without having to create and run a new image
 
 If we change something in the `server.js`, eg. add a `console.log`, we need to add nodemon to see the logs with `docker logs feedback-app` as the code in `server.js` is executed by the node runtime (the alternative is to stop de container and restart/recreate one)
 
@@ -387,7 +387,9 @@ If we change something in the `server.js`, eg. add a `console.log`, we need to a
 
 #### Read-Only Volumes
 
-The container isn't able to write to the app folder, even with a bind mount, we can enforce this by turning the bind mount into a read only volume by adding an extra `:ro` to the bind mount command, but since we write to some of those folders from inside the container, we'll need to specify another sub-volume to allow that, we have a named volume for /app/feedback already, we need to add one for the temp folder, and we'll use an anonymous volume `docker run -p 3000:80 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:volumes`
+The container isn't able to write to the app folder, we can enforce this by turning the bind mount into a read only volume by adding an extra `:ro` to the bind mount command, but since we write to some of those folders from inside the container, we'll need to specify another sub-volume to allow that, we have a named volume for /app/feedback already, we need to add one for the temp folder, and we'll use an anonymous volume `docker run -p 3000:80 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:volumes`
+
+nb: if on the contrary we wanted to write the files to our local feedback folder, we can run the container without the named volume but with the bind mount for the entire app, `docker run -p 3000:80 -d --name feedback-app -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app" -v /app/node_modules --rm feedback-node-app:volumes`
 
 #### Managing Volumes
 
