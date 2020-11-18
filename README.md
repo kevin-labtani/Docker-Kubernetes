@@ -647,6 +647,26 @@ Finally, we'll add a `.dockerignore`
 
 ### Using Docker-Compose
 
+We'll be working with `8-compose` for this module, the same MERN stack app as we used before
+
+See `docker-commands.txt` for a list of all the commands we have to execute to get our project up and running, there's quite a lot of them!
+
+Docker Compose is a tool which helps with orchestration of multiple containers (It can also be used for single Containers to simplify building and launching) with just one configuration file and a set of orchestration command (build, start, stop,...)
+
+nb: Docker Compose does NOT replace Dockerfiles for custom Images  
+ Docker Compose does NOT replace Images or Containers  
+ Docker Compose is NOT suited for managing multiple containers on different hosts (machines)
+
+We can put our container configuration into a `docker-compose.yaml` file and then use just one
+command to bring up the entire environment, `docker-compose up`
+
+Two optional flags for `docker-compose up`:
+
+- `-d` : Start in detached mode
+- `--build` : Force Docker Compose to re-evaluate / rebuild all images (otherwise, it only does that if an image is missing)
+
+`docker-compose down` will top and remove all containers/services, if run with the `-v` flag it will also remove all volumes used for the containers
+
 ### “Utility Containers”
 
 ### More Complex Setups
