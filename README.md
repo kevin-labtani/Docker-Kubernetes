@@ -232,7 +232,7 @@ Another way to getting access to stderr/stdout from the container is `docker log
 
 `docker run -it IMAGE_ID` will run a container in interactive mode (`-i` keeps stdin open, `-t` allocate a pseudo-TTY, ie. creates a pseudo terminal)
 
-We'll use `3-python-app` as the demo project for this part
+We'll use `3-python-app` as the demo project for this module
 
 first we add a `Dockerfile`
 
@@ -311,7 +311,7 @@ There a different kinds of data:
 
 #### Example
 
-We'll be working with `5-data-volumes` for this part, first we'll dockerize it by writing a `Dockerfile` and building an image `docker build -t feedback-node-app .` and start the container `docker run -p 3000:80 -d --name feedback-app --rm feedback-node-app`
+We'll be working with `5-data-volumes` for this module, first we'll dockerize it by writing a `Dockerfile` and building an image `docker build -t feedback-node-app .` and start the container `docker run -p 3000:80 -d --name feedback-app --rm feedback-node-app`
 
 The app will work, if we write a feedback message title "awesome", we'll then be able to see it at http://localhost:3000/feedback/awesome.txt; the new file `awesome.txt` isn't saved locally though
 
@@ -425,7 +425,7 @@ Now we rebuild, `docker build -t feedback-node-app:env .` and runthe container a
 
 We don't have to stick to the default ENV variable, we can use the `--env KEY=VALUE` flag to run the app on another port, `docker run -p 3000:8000 --env PORT=8000 -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:env`
 
-`-e` also works as a shortcut for `--env`, if we have more than one env varialbe, we simply add multiple flags
+`-e` also works as a shortcut for `--env`, if we have more than one env variable, we simply add multiple flags
 
 We can also specify a file that contains the env variables, eg if we have a `.env` file, run the container with `--env-file ./.env`, `docker run -p 3000:8000 --env-file ./.env -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:env`
 
@@ -449,7 +449,7 @@ Containers need to communicate
 - with the host machine
 - with the world wide web
 
-We'll be working with `6-networks` for this part, an api based on swapi with a db implemented (MongoDB needs to be installed locally to be able to follow along)
+We'll be working with `6-networks` for this module, an api based on swapi with a db implemented (MongoDB needs to be installed locally to be able to follow along)
 
 #### Communicating with the World Wide Web
 
@@ -510,7 +510,138 @@ nb: right now we lose all the data from the db when the MongoDB container is sto
 
 ### Multi-Container Projects
 
+We'll be working with `7-multi-service-app` for this module, a demo project with 3 "building blocks":
 
+- Database: MongoDB
+  - Data must persist
+  - Access should be limited
+- Backend: NodeJS REST API
+  - Data must persist
+  - Live Source Code Update
+- Frontend: React SPA
+  - Live Source Code Update
+
+For this module, we'll focus on development only, ie. not deployment & production
+
+#### Dockerizing the MongoDB Service
+
+We're going to use the docker hub mongo image, `docker run -d --rm --name mongodb -p 27017:27017 mongo`, we need to expose the default mongo port from the container to our localhost machine as the rest of our backend is not dockerized yet and needs to communicate with it
+
+#### Dockerizing the Node App
+
+We'll write our own `Dockerfile`
+
+```
+FROM node
+
+WORKDIR /app
+
+COPY package.json .
+
+RUN npm install
+
+COPY . .
+
+EXPOSE 80
+
+CMD ["node", "app.js"]
+```
+
+Then build our own image, `docker build -t goals-node .` (we need to be in the backend folder to do that)
+
+Finally, we spin up a container, `docker run --name goals-backend --rm -d -p 80:80 goals-node` (we need to publish the port 80 so that the react app can still connect to it)
+
+Right now the app crashes, we need to change the address in `app.js` for `mongoose.connect` from `mongodb://localhost:27017/course-goals` to `mongodb://host.docker.internal:27017/course-goals`, then rebuild the image and rerun a container. We see in the logs that the app is successfully connecting to the mongodb container
+
+#### Moving the React SPA into a Container
+
+We'll write our own `Dockerfile`  
+(by default the port is 3000 for a react app)
+
+```
+FROM node
+
+WORKDIR /app
+
+COPY package.json .
+
+RUN npm install
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+```
+
+Then build our own image, `docker build -t goals-react .` (we need to be in the frontend folder to do that)
+
+Finally, we spin up a container, `docker run --name goals-frontend --rm -p 3000:3000 -it goals-react`, we need to run the container in interactive mode otherwise the dev server spun up by the react app will immediately stop (we won't actually interact with it)
+
+Our MERN stack app is now entirely dockerized and works, it needs to be polished more though
+
+#### Adding Docker Networks
+
+Right now, the containers are communicating through our localhost and their published port, we want to use a docker network instead
+
+First, we'll create a docker network `docker network create goals-net`
+
+Second, start a mongoDB container running on the network `docker run --name mongodb -d --rm --network goals-net mongo`, there is no longer a need to publish a port
+
+Third, we need to change again the address in `app.js` for `mongoose.connect` from `mongodb://host.docker.internal:27017/course-goals` to `mongodb://mongodb:27017/course-goals`, then rebuild the image and start a container, this time on the network, `docker run --name goals-backend --rm -d --network goals-net -p 80:80 goals-node`
+
+nb: for the React app, as it is run in the browser and has no idea about our containers and how to translate the `goals-backend` domain, we don't do the same as for our backend, we keep all our domains as `localhost`, so it means we still need to publish port 80 form our backend app, and we don't need to put the React app on the docker network, we'll still start a container with `docker run --name goals-frontend --rm -p 3000:3000 -it goals-react` as before
+
+#### Adding Data Persistence & Security to MongoDB
+
+For our MongoDB container, we want the data to persist and the access to be limited
+
+We'll add a volume to the container to save the data, we ge the path to the directory from the [doc](https://hub.docker.com/_/mongo) `docker run --name mongodb -v data:/data/db -d --rm --network goals-net mongo`
+
+nb: we just want ot persist data, so we use a volume and not a bind mount
+
+For security, we can use the env variables `-e MONGO_INITDB_ROOT_USERNAME=VALUE -e MONGO_INITDB_ROOT_PASSWORD=VALUE` so that a username and password are necessary to connect ot the container `docker run --name mongodb -v data:/data/db -d --rm --network goals-net -e MONGO_INITDB_ROOT_USERNAME=kevin -e MONGO_INITDB_ROOT_PASSWORD=test mongo`
+
+Now we need to modify our backend to reflect the changes to access, we need to change the address in `app.js` for `mongoose.connect` to `mongodb://kevin:test@mongodb:27017/course-goals?authSource=admin`, then rebuild and start a container; our access to the mongoDB container is now secure (nb: we need to remove the volume created without identifiers and make a new one)
+
+#### Volumes, Bind Mounts & Polishing for the NodeJS Container
+
+For our NodeJS container, we want the data to persist (the log files, in this case), and we want live source code update
+
+We need to add nodemon, modify the `package.json` and the `Dockerfile`
+
+```json
+{
+  [...]
+  "scripts": {
+    "start": "nodemon app.js"
+  },
+  [...]
+  "devDependencies": {
+    "nodemon": "^2.0.4"
+  }
+}
+```
+
+```
+CMD ["npm", "start"]
+```
+
+We'll add a volume to the container to save the logs, a bind mount for the entire app, and an anonymous volume for node_modules, `docker run --name goals-backend -v /home/kevin/code/docker-bootcamp/7-multi-service-app/backend:/app -v logs:/app/logs -v /app/node_modules --rm -d --network goals-net -p 80:80 goals-node`
+
+Right now the MongoDB username and pwd are hard coded, we'll use env variables instead through a `.env` file, we need to change the address in `app.js` for `mongoose.connect` to `mongodb://${process.env.NONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@mongodb:27017/course-goals?authSource=admin`, then rebuild and start a container, `docker run --name goals-backend -v /home/kevin/code/docker-bootcamp/7-multi-service-app/backend:/app -v logs:/app/logs -v /app/node_modules --rm -d --env-file ./.env --network goals-net -p 80:80 goals-node`
+
+Finally, we'll add a `.dockerignore`
+
+#### Live Source Code Updates for the React Container (with Bind Mounts)
+
+For our React app container, we want live source code update
+
+We'll add a bind mount for the `src`, run a container with `docker run -v /home/kevin/code/docker-bootcamp/7-multi-service-app/frontend/src:/app/src --name goals-frontend --rm -p 3000:3000 -it goals-react`
+
+nb: no need to add nodemon to a create-react-app app
+
+Finally, we'll add a `.dockerignore`
 
 ### Using Docker-Compose
 
