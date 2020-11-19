@@ -651,21 +651,131 @@ We'll be working with `8-compose` for this module, the same MERN stack app as we
 
 See `docker-commands.txt` for a list of all the commands we have to execute to get our project up and running, there's quite a lot of them!
 
-Docker Compose is a tool which helps with orchestration of multiple containers (It can also be used for single Containers to simplify building and launching) with just one configuration file and a set of orchestration command (build, start, stop,...)
+Docker compose is a tool which helps with orchestration of multiple containers (It can also be used for single Containers to simplify building and launching) with just one configuration file and a set of orchestration command (build, start, stop,...)
 
-nb: Docker Compose does NOT replace Dockerfiles for custom Images  
- Docker Compose does NOT replace Images or Containers  
- Docker Compose is NOT suited for managing multiple containers on different hosts (machines)
+nb: Docker compose does NOT replace Dockerfiles for custom Images  
+ Docker compose does NOT replace Images or Containers  
+ Docker compose is NOT suited for managing multiple containers on different hosts (machines)
 
-We can put our container configuration into a `docker-compose.yaml` file and then use just one
-command to bring up the entire environment, `docker-compose up`
+We can put our container configuration into a `docker-compose.yaml` file and then use just one command to bring up the entire environment, `docker-compose up`
 
-Two optional flags for `docker-compose up`:
+#### docker-compose.yaml
+
+nb: YAML uses indentation (2 spaces)  
+use VSCode docker extension for autocomplete help
+
+Use `docker-compose version` to check the installed version
+
+The `services` key lists the containers as its children
+
+Use the `image` key when using an existing image, the `build` key to build a custom one
+
+If our `Dockerfile` is named Dockerfile we can use the shorter form for the `build`
+
+```yaml
+build:
+  context: ./backend
+  dockerfile: Dockerfile
+# is the same as
+build: ./backend
+```
+
+There are two options for listing env variables:
+
+```yaml
+environment:
+  - MONGO_INITDB_ROOT_USERNAME=kevin
+  - MONGO_INITDB_ROOT_PASSWORD=test
+# or
+environment:
+  MONGO_INITDB_ROOT_USERNAME: kevin
+  MONGO_INITDB_ROOT_PASSWORD: test
+```
+
+We can also specify an `.env` file - the path we specify is relative to the `docker-compose.yaml`
+
+```yaml
+env_file:
+  - ./env/mongo.env
+```
+
+When using docker compose, docker will automatically create a new network for all the services specified in the `.yaml` file and add them to that network, so while we can use a `network` key to specify a network, it isn't necessary
+
+For named volumes, we also need to add a top level `volumes` key listing all named volumes used by our services  
+nb: the same volume can be shared between different containers
+
+```yaml
+volumes:
+  data:
+  logs:
+  # no values after the key to the name
+```
+
+For bind mounts, we don't need the absolute path, we can use a relative path
+
+The `depends_on` key/option is specific to docker compose, it tells docker compose that a container is depending on another container being already running, we list the services names as values
+
+To run a service in interactive mode, we can set the keys/vals
+
+```yaml
+stdin_open: true
+tty: true
+```
+
+the full `docker-compose.yaml` for our NEMRN stack app:
+
+```yaml
+version: "3.8"
+services:
+  mongodb:
+    image: "mongo"
+    volumes:
+      - data:/data/db
+    env_file:
+      - ./env/mongo.env
+  backend:
+    build: ./backend
+    ports:
+      - "80:80"
+    volumes:
+      - logs:/app/logs
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - ./env/backend.env
+    depends_on:
+      - mongodb
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+    stdin_open: true
+    tty: true
+    depends_on:
+      - backend
+volumes:
+  data:
+  logs:
+```
+
+#### Docker Compose Up & Down
+
+`docker-compose up` will build images & start a container for each service, it takes two flags:
 
 - `-d` : Start in detached mode
-- `--build` : Force Docker Compose to re-evaluate / rebuild all images (otherwise, it only does that if an image is missing)
+- `--build` : Force docker compose to re-evaluate / rebuild all images (otherwise, it only does that if an image is missing)
 
-`docker-compose down` will top and remove all containers/services, if run with the `-v` flag it will also remove all volumes used for the containers
+`docker-compose down` will stop and remove all containers/services as well as the networks it created, if run with the `-v` flag it will also remove all volumes used for the containers
+
+`docker-compose build` will just build the images and not start containers
+
+#### Docker Compose Naming
+
+Docker compose will rename our containers and volumes based on the folder name and the service name we specify in the `docker-compose.yaml`, and an incrementing number for containers
+
+We can assign our own container names with the `container_name` option
 
 ### “Utility Containers”
 
