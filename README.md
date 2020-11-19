@@ -147,7 +147,7 @@ is created and started based on that image. `CMD` takes an array of strings
 
 Our final `Dockerfile`:
 
-```
+```dockerfile
 FROM node
 
 WORKDIR /app
@@ -169,7 +169,7 @@ CMD ["node", "server.js"]
 
 if we modify our app, we'll need to rebuild our image, we can optimise our `Dockerfile` so that `npm install` doesn't need to be re-run on each build everytime we change our source code (if a layer of the image is modified, every subsequent layer will be re-run at build time instead of using the cached results):
 
-```
+```dockerfile
 FROM node
 
 WORKDIR /app
@@ -236,7 +236,7 @@ We'll use `3-python-app` as the demo project for this module
 
 first we add a `Dockerfile`
 
-```
+```dockerfile
 FROM python
 
 WORKDIR /app
@@ -337,7 +337,7 @@ A container can write data into a volume and read data from it
 
 To add a volume to our container, add an instruction to the `Dockerfile`
 
-```
+```dockerfile
 VOLUME [ "/app/feedback" ]
 ```
 
@@ -417,7 +417,7 @@ Docker supports build-time ARGuments and runtime ENVironment variables
 
 Let's change our port in the example app to use an env variable, `app.listen(process.env.PORT);` and update the `Dockerfile` to set a default environment variable
 
-```
+```dockerfile
 ENV PORT 80
 
 EXPOSE $PORT
@@ -533,7 +533,7 @@ We're going to use the docker hub mongo image, `docker run -d --rm --name mongod
 
 We'll write our own `Dockerfile`
 
-```
+```dockerfile
 FROM node
 
 WORKDIR /app
@@ -560,7 +560,7 @@ Right now the app crashes, we need to change the address in `app.js` for `mongoo
 We'll write our own `Dockerfile`  
 (by default the port is 3000 for a react app)
 
-```
+```dockerfile
 FROM node
 
 WORKDIR /app
@@ -625,7 +625,7 @@ We need to add nodemon, modify the `package.json` and the `Dockerfile`
 }
 ```
 
-```
+```dockerfile
 CMD ["npm", "start"]
 ```
 
@@ -778,6 +778,65 @@ Docker compose will rename our containers and volumes based on the folder name a
 We can assign our own container names with the `container_name` option
 
 ### “Utility Containers”
+
+An "Utility Container" is a container that just has an environment in them, with no application, it allows eg. to create a npm project on our local machine without having node & npm installed on it
+
+nb: [some comments on running utility containers on linux](https://www.udemy.com/course/docker-kubernetes-the-practical-guide/learn/lecture/23074458#questions/12977214/)
+
+`docker exec` allows use to run certain commands inside the running container beisdes the default command the container runs, eg `docker exec -it node npm init` to init a npm project inside a container using the official node image
+
+We can also overwrite the default command of the image with `docker run -it node npm init`
+
+Still not that useful since these container will stop as soon as the npm project is initialized and we're left with nothing!
+
+#### Building a utility container
+
+We'll be working with `9-utility-container` for this module, we will create a utility container, nb: we don't want a starting command
+
+```dockerfile
+FROM node:14-alpine
+
+WORKDIR /app
+```
+
+we'll build our image, `docker build -t node-util .` and run it to create a npm app in the container _and locally_ thanks to a bind mount `docker run -it -v /home/kevin/code/docker-bootcamp/9-utility-container:/app node-util npm init`
+
+Running the command will create a `package.json` on our localhost machine, meaning we can create a npm project on our local machine without having node & npm installed on our local machine!
+
+nb: the container shuts down once the command is done
+
+#### ENTRYPOINT
+
+What if we wanted a more restricted utility container, eg. we only want container that runs npm commands? We can add an `ENTRYPOINT` key to the `Dockerfile`
+
+```dockerfile
+FROM node:14-alpine
+
+WORKDIR /app
+
+ENTRYPOINT [ "npm" ]
+```
+
+Then build an image `docker build -t mynpm .` and run it with our volume `docker run -it -v /home/kevin/code/docker-bootcamp/9-utility-container:/app mynpm init`; once again, running the command will create a `package.json` on our localhost machine. We could then add express, with `docker run -it -v /home/kevin/code/docker-bootcamp/9-utility-container:/app mynpm install express` 
+
+#### Using Docker Compose
+
+Right now, we have to write long command prompts, let's use docker compose to solve that problem
+
+```yaml
+version: "3.8"
+services:
+  npm:
+    build: ./
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/app
+```
+
+Use `docker-compose run mynpm init` to run the mynpm service with docker compose and create a npm project. Then run `docker-compose run mynpm install express` to install express
+
+There is no up/down with `docker-compose run` so the containers won't be removed, add the `--rm` flag to auto-remove them, eg. `docker-compose run --rm mynpm init`
 
 ### More Complex Setups
 
