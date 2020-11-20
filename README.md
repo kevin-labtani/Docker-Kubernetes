@@ -817,7 +817,7 @@ WORKDIR /app
 ENTRYPOINT [ "npm" ]
 ```
 
-Then build an image `docker build -t mynpm .` and run it with our volume `docker run -it -v /home/kevin/code/docker-bootcamp/9-utility-container:/app mynpm init`; once again, running the command will create a `package.json` on our localhost machine. We could then add express, with `docker run -it -v /home/kevin/code/docker-bootcamp/9-utility-container:/app mynpm install express` 
+Then build an image `docker build -t mynpm .` and run it with our volume `docker run -it -v /home/kevin/code/docker-bootcamp/9-utility-container:/app mynpm init`; once again, running the command will create a `package.json` on our localhost machine. We could then add express, with `docker run -it -v /home/kevin/code/docker-bootcamp/9-utility-container:/app mynpm install express`
 
 #### Using Docker Compose
 
@@ -839,6 +839,160 @@ Use `docker-compose run mynpm init` to run the mynpm service with docker compose
 There is no up/down with `docker-compose run` so the containers won't be removed, add the `--rm` flag to auto-remove them, eg. `docker-compose run --rm mynpm init`
 
 ### More Complex Setups
+
+We'll be setting up a Laravel & PHP dockerized Project for this section
+
+Our target setup will allow us to build laravel apps without having to install anything on our host machine, in total we'll have 6 containers,
+
+- Our host machine with a folder for the source code for the laravel php app
+- An app container with the PHP interpreter that has access to our source code
+- An app container with a Nginx web server that takes incoming request and send them to the PHP interpreter container, get the response back and sends it to the client
+- An app container with a MySQL database that communicates with the PHP interpreter container
+- An utility container for Composer, the package manager that we'll use to create the laravel app (in our source code folder) and install dependencies
+- An utility container for laravel Artisan, a command tool for eg. running migrations
+- An utility container for npm, used for the views of the app
+
+We'll be working with `10-laravel` for this module
+
+#### Adding a Nginx (Web Server) Container
+
+We'll use `docker-compose.yaml` to setup the entire project
+
+For Nginx we'll use the official image from docker hub
+
+The default port for Nginx is 80, we'll publish it to our local machine port 8000
+
+We need a bind mount so we can provide our own configuration to Nginx, we'll bind just the specific `nginx.conf` file, in read-only mode as the container shouldn't have to a need to overwrite this conf file
+
+```yaml
+server:
+  image: "nginx:stable-alpine"
+  ports:
+    - "8000:80"
+  volumes:
+    - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+```
+
+#### Adding a PHP Container
+
+For PHP we'll build our own image as there's no finished image with everything we need so we need to write a `Dockerfile`
+
+We need to use a php-fpm image form the Nginx config we're using as the base for our custom image
+
+We'll install pdo pdo_mysql within our image
+
+```dockerfile
+FROM php:7.4-fpm-alpine
+
+WORKDIR /var/www/html
+
+RUN docker-php-ext-install pdo pdo_mysql
+```
+
+We don't have a command in our `Dockerfile`, so the command from the base image will be used, in this case it's a command that invokes the PHP interpreter
+
+In our `docker-compose.yaml` file, we need a bind mount to make the source code available to the PHP interpreter in the right folder, `/var/www/html`, and we want to be able to work on that source code in the container and for our changes to be reflected on the local machine. We use the `delegated` option to improve performance when it comes to writing to the local machine
+
+The port we expect is defined in `nginx.conf`, 3000, and the default port is in the source code for the base image, 9000; but while we can map the ports `- "3000:9000"` in case we want to interact with the PHP container from our host machine, it's not actually needed just to send requests as we have direct container to container communication, we can just modify the `nginx.conf` from `fastcgi_pass php:3000;` to `fastcgi_pass php:9000;`
+
+```yaml
+php:
+  build:
+    context: ./dockerfiles
+    dockerfile: php.dockerfile
+  volumes:
+    - ./src:/var/www/html:delegated
+```
+
+#### Adding a MySQL Container
+
+For MySQL, we'll use the official mysql image
+
+The container will communicate with the PHP container through the docker network
+
+We do need env variables to set up the MySQL image, we'll use a `.env` file
+
+```yaml
+mysql:
+  image: mysql:5.7
+  env_file:
+    - ./env/mysql.env
+```
+
+#### Adding a Composer Utility Container
+
+We need composer to setup a laravel application
+
+We'll build our own image base on the existing composer image, with a custom `ENTRYPOINT`
+
+```dockerfile
+FROM composer:latest
+
+WORKDIR /var/www/html
+
+ENTRYPOINT [ "composer", "--ignore-platform-reqs" ]
+```
+
+In our `docker-compose.yaml` file, we need a bind mount to expose our source code directory to this image so that if we use composer to create a laravel app inside of the container, this will be mirrored to our local machine, we also create an empty /src folder on our local machine
+
+```yaml
+composer:
+  build:
+    context: ./dockerfiles
+    dockerfile: composer.dockerfile
+  volumes:
+    - ./src:/var/www/html
+```
+
+#### Creating a Laravel App via the Composer Utility Container
+
+These four container are sufficient for us to create the laravel app
+
+In our terminal, we want to run just the compose service to create our laravel app, `docker-compose run --rm composer create-project --prefer-dist laravel/laravel .`, we create the app in the root folder of the container as we specified a `WORKDIR`
+
+This is working as intended and we now have our laravel app in the local machine /src folder
+
+#### Permission Errors on Linux
+
+When using Docker on Linux, we might face permission errors when adding a bind mount as shown in the next part. If we do, try these steps:
+
+Edit the `php.dockerfile` to this:
+
+```dockerfile
+FROM php:7.4-fpm-alpine
+
+WORKDIR /var/www/html
+
+COPY src .
+
+RUN docker-php-ext-install pdo pdo_mysql
+
+RUN addgroup -g 1000 laravel && adduser -G laravel -g laravel -s /bin/sh -D laravel
+
+USER laravel
+```
+
+Also edit the `composer.dockerfile` to this:
+
+```dockerfile
+FROM composer:latest
+
+RUN addgroup -g 1000 laravel && adduser -G laravel -g laravel -s /bin/sh -D laravel
+
+USER laravel
+
+WORKDIR /var/www/html
+
+ENTRYPOINT [ "composer", "--ignore-platform-reqs" ]
+```
+
+#### Launching Only Some Docker Compose Services
+
+#### Adding More Utility Containers
+
+#### Docker Compose with and without Dockerfiles
+
+#### Bind Mounts vs COPY, When To Use What
 
 ### Deploying Docker Containers
 
