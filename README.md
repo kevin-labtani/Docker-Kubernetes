@@ -870,7 +870,7 @@ server:
   ports:
     - "8000:80"
   volumes:
-    - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 ```
 
 #### Adding a PHP Container
@@ -963,8 +963,6 @@ FROM php:7.4-fpm-alpine
 
 WORKDIR /var/www/html
 
-COPY src .
-
 RUN docker-php-ext-install pdo pdo_mysql
 
 RUN addgroup -g 1000 laravel && adduser -G laravel -g laravel -s /bin/sh -D laravel
@@ -986,7 +984,52 @@ WORKDIR /var/www/html
 ENTRYPOINT [ "composer", "--ignore-platform-reqs" ]
 ```
 
-#### Launching Only Some Docker Compose Services
+nb: we need to delete the existing laravel app (i.e. the src/ folder) and re-create it after updating all these files. Also make sure to prune all images before re-running the commands again with `docker image prune -a`
+
+#### Launching Our App
+
+In the `.env` file in the /src folder of our newly created app, we need to adjust the DB\_ keys values so that laravel is able to connect to the database, from
+
+```
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=laravel
+DB_USERNAME=root
+DB_PASSWORD=
+```
+
+to
+
+```
+DB_CONNECTION=mysql
+DB_HOST=mysql
+DB_PORT=3306
+DB_DATABASE=homestead
+DB_USERNAME=homestead
+DB_PASSWORD=secret
+```
+
+Right now, our server service - the main entry point that will serve the application - doesn't have any way to communicate with the local source code, we need to add a bind mount to it
+
+We can also add dependencies to the server service so that just running the server service will also run the dependencies, and we don't have to type `docker-compose up -d server php mysql`
+
+```yaml
+server:
+  image: "nginx:stable-alpine"
+  ports:
+    - "8000:80"
+  volumes:
+    - ./src:/var/www/html
+    - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  depends_on:
+    - php
+    - mysql
+```
+
+We can now run our app, `docker-compose up -d --build server`, we want to rebuild the images in case something changed
+
+Our laravel app is now running on [localhost:8000](http://localhost:8000/)
 
 #### Adding More Utility Containers
 
