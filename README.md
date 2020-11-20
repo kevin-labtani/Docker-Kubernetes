@@ -206,6 +206,8 @@ We need to create and start a Container to start the application which is inside
 
 `docker image prune` will remove all unused images
 
+`docker container prune` will remove all unused containers
+
 `docker run --rm IMAGE_NAME/ID` will automatically remove a container when it exits eg. `docker run -p 3000:80 --rm 63dfe`
 
 `docker images inspect IMAGE_ID` can be used to inspect an image
@@ -399,7 +401,7 @@ nb: if on the contrary we wanted to write the files to our local feedback folder
 `docker volume remove VOL_NAME` to remove a volume
 `docker volume prune` to remove unused volumes
 
-#### COPY
+#### COPY vs Bind Mount
 
 We still `COPY . .` (ie. copy everything) in our `Dockerfile` even though we bind the entire app, it's not actually necessary right now, but the `docker run` command we currently run with the bind mount is used for development purpose so we can change our code without having to rebuild the image every time, once we're done with developing and want to host our app in production, we won't run it with a bind mount, so we do need to keep the `COPY` command
 
@@ -658,6 +660,8 @@ nb: Docker compose does NOT replace Dockerfiles for custom Images
  Docker compose is NOT suited for managing multiple containers on different hosts (machines)
 
 We can put our container configuration into a `docker-compose.yaml` file and then use just one command to bring up the entire environment, `docker-compose up`
+
+As we'll see later, we can use `docker-compose.yaml` to overwrite/add instructions from a `Dockerfile`, or even instead of a `Dockerfile` for simple cases, as `COPY` and `RUN` aren't available in a docker compose file, but `working_dir` and `entrypoint` are
 
 #### docker-compose.yaml
 
@@ -1033,9 +1037,188 @@ Our laravel app is now running on [localhost:8000](http://localhost:8000/)
 
 #### Adding More Utility Containers
 
-#### Docker Compose with and without Dockerfiles
+We still need to add an artisan utility container
 
-#### Bind Mounts vs COPY, When To Use What
+We'll use the php `Dockerfile` for it, but overwrite/add some of the instructions through the `docker-compose.yaml` file, specifically, the entrypoint. (alt. we could write another `Dockerfile`)
+
+```yaml
+artisan:
+  build:
+    context: ./dockerfiles
+    dockerfile: php.dockerfile
+  volumes:
+    - ./src:/var/www/html
+  entrypoint: ["php", "/var/www/html/artisan"]
+```
+
+Finally, we'll add a npm utility container, using the official npm image, and with a bind mount
+
+```yaml
+npm:
+  image: node:14-alpine
+  working_dir: /var/www/html
+  entrypoint: ["npm"]
+  volumes:
+    - ./src:/var/www/html
+```
+
+With our app running (`docker-compose up -d --build server`), we'll start artisan and run migrations, `docker-compose run --rm artisan migrate`
+
+We now have a working setup for a laravel app
+
+Our final `docker-compose.yaml`,
+
+```yaml
+version: "3.8"
+
+services:
+  server:
+    image: "nginx:stable-alpine"
+    ports:
+      - "8000:80"
+    volumes:
+      - ./src:/var/www/html
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - php
+      - mysql
+  php:
+    build:
+      context: ./dockerfiles
+      dockerfile: php.dockerfile
+    volumes:
+      - ./src:/var/www/html:delegated
+  mysql:
+    image: mysql:5.7
+    env_file:
+      - ./env/mysql.env
+  composer:
+    build:
+      context: ./dockerfiles
+      dockerfile: composer.dockerfile
+    volumes:
+      - ./src:/var/www/html
+  artisan:
+    build:
+      context: ./dockerfiles
+      dockerfile: php.dockerfile
+    volumes:
+      - ./src:/var/www/html
+    entrypoint: ["php", "/var/www/html/artisan"]
+  npm:
+    image: node:14-alpine
+    working_dir: /var/www/html
+    entrypoint: ["npm"]
+    volumes:
+      - ./src:/var/www/html
+```
+
+#### Bind Mounts vs COPY
+
+nb: this is a setup for development purpose, not deployment. The idea of containers for deployment is that everything a container needs is inside the container, so there's no local machine with the source code in a deployment setup
+
+So, we might want to consider creating a `Dockerfile` for the server service, and copying over our source code and nginx config into that image so that besides the bind mount used during development, we also copy a snapshot of the source code and our nginx config in the image when it's being build, so that when we deploy that image, it already contains the source code and nginx config it needs, let's do that, in `nginx.dockerfile`
+
+```dockerfile
+FROM nginx:stable-alpine
+
+WORKDIR /etc/nginx/conf.d
+
+COPY nginx/nginx.conf .
+
+RUN mv nginx.conf default.conf
+
+WORKDIR /var/www/html
+
+COPY src .
+```
+
+We'll also update the server service in our `docker-compose.yaml`. We need to modify our usual paths for the `context` and `dockerfile` keys because the `context` key also sets the folder where the dockerfile will be built, but the src and nginx folders we refer to in the `nginx.dockerfile` are outside the dockerfiles folder so it would fail with our usual paths
+
+```yaml
+server:
+  # image: "nginx:stable-alpine"
+  build:
+    context: .
+    dockerfile: dockerfiles/nginx.dockerfile
+  ports:
+    - "8000:80"
+  volumes:
+    - ./src:/var/www/html
+    - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  depends_on:
+    - php
+    - mysql
+```
+
+We need to also modify the `php.dockerfile` for the php container, so that we copy the source code into the container so it works without the bind mount once deployed
+
+```dockerfile
+[...]
+COPY src .
+[...]
+```
+
+And as with the server service, we need to adjust the `context` & `dockerfile` keys in the `docker-compose.yaml` file
+
+```yaml
+php:
+  build:
+    context: .
+    dockerfile: dockerfiles/php.dockerfile
+  volumes:
+    - ./src:/var/www/html:delegated
+mysql:
+  image: mysql:5.7
+  env_file:
+    - ./env/mysql.env
+```
+
+Now if we remove the bind mounts for the server and php services,
+
+```yaml
+server:
+  [...]
+  # volumes:
+  #   - ./src:/var/www/html
+  #   - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  [...]
+php:
+  [...]
+  # volumes:
+  #   - ./src:/var/www/html:delegated
+  [...]
+```
+
+and launch our app with `docker-compose up -d --build server`, it works but we have a laravel permission error linked to our php service; we can fix this by giving write access to our php container to the default user created by the base image by adding a command, our deployment ready `php.dockerfile`
+
+```dockerfile
+FROM php:7.4-fpm-alpine
+
+WORKDIR /var/www/html
+
+COPY src .
+
+RUN docker-php-ext-install pdo pdo_mysql
+
+RUN chown -R www-data:www-data /var/www/html
+```
+
+nb: on linux we might have permissions issues
+
+Our app then runs without bind mounts and is ready for deployment. We do want to add the bind mounts back in, though
+
+We'll finally also need to update the `docker-compose.yaml` for the artisan service
+
+```yaml
+artisan:
+  build:
+    context: .
+    dockerfile: dockerfiles/php.dockerfile
+  volumes:
+    - ./src:/var/www/html
+  entrypoint: ["php", "/var/www/html/artisan"]
+```
 
 ### Deploying Docker Containers
 
