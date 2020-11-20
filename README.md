@@ -990,6 +990,8 @@ ENTRYPOINT [ "composer", "--ignore-platform-reqs" ]
 
 nb: we need to delete the existing laravel app (i.e. the src/ folder) and re-create it after updating all these files. Also make sure to prune all images before re-running the commands again with `docker image prune -a`
 
+Find extra comments and solutions [here](https://www.udemy.com/course/docker-kubernetes-the-practical-guide/learn/lecture/23172898#questions/12986850/)
+
 #### Launching Our App
 
 In the `.env` file in the /src folder of our newly created app, we need to adjust the DB\_ keys values so that laravel is able to connect to the database, from
