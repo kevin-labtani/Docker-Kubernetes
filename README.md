@@ -1224,6 +1224,45 @@ artisan:
 
 ### Deploying Docker Containers
 
+#### Development to Production
+
+Bind Mounts shouldn’t be used in Production
+
+Containerized apps might need a build step (eg. React apps)
+
+Multi-Container projects might need to be split (or should be split) across multiple hosts / remote machines
+
+Trade-offs between control and responsibility might be worth it, if we have to do everything ourselves, we are responsible for security, etc
+
+#### Bind Mounts, Volumes & COPY
+
+In Development:
+
+- Containers should encapsulate the runtime environment but not necessarily the code
+- Use “Bind Mounts” to provide your local host project files to the running container
+- Allows for instant updates without restarting the container
+
+In Production:  
+Image / Container is the “single source of truth”
+
+- A container should work as a standalone, we should not have source code on your remote machine
+- Use `COPY` to copy a code snapshot into the image
+- Ensures that every image runs without any extra, surrounding configuration or code
+
+#### Basic Example with AWS & EC2
+
+We'll be working with `11-deployment` for this module, a simple node app without a database or anything else, and with a single container
+
+We'll build an image of the app, `docker build -t node-dep-ex .` and run a container `docker run -d --rm --name node-dep -p 80:80 node-dep-ex` to make sure it works (it does!)
+
+We'll install docker on a remote host (eg. via SSH), push our local docker image to Docker Hub and then pull the image to the remote host, and run a container based on that image on the remote host and expose the necessary ports from that remote host to the www so end-users can use our app
+
+We'll deploy to AWS EC2. AWS EC2 is a service that allows us to spin up and manage our own remote machines, the steps are:
+
+1. Create and launch EC2 instance, VPC and security group
+2. Configure security group to expose all required ports to WWW
+3. Connect to instance (SSH), install Docker and run the container
+
 ## Kubernetes
 
 Kubernetes Introduction & Basics  
