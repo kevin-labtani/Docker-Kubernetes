@@ -1330,12 +1330,38 @@ Say we update our code, the workflow to push the updated code is:
 
 To shut the aws instance forever, from the EC2 dashboard, instance tab, select our instance and under _instance state_, pick terminate
 
-The disadvantages of this DIY approach is that we fully “own” the remote machine and we’re responsible for it and it’s security, we need to keep essentials software updated, manage network and security groups / firewall. On top of that, SSHing into the machine to manage it can be
+The disadvantages of this DIY approach is that we fully “own” the remote machine and we’re responsible for it and it’s security, we need to keep essentials software updated, manage network and security groups / firewall, manage scaling. On top of that, SSHing into the machine to manage it can be
 annoying
 
 #### Managed Remote Machines with AWS ECS
 
 With a managed remote machine, creation, management and updating is handled automatically, monitoring and scaling is simplified
+
+We'll use the same app as before, `11-deployment`
+
+Go to the [ECS Console](https://console.aws.amazon.com/ecs/home?region=us-east-1#/getStarted) and click on _get started_ and then _custom_ to create our own container
+
+The side drawer that appears allows us to specify the _Container definition_, or how ECS should execute `docker run`, ie. setting _container name_ is the same as using the `--name` flag. Pick a name (eg. node-demo), put our repo on docker hub as image `kevinlabtani/node-deploy-1`, map our ports `80` nb. the container internal ports will always be mapped to the same port outside of the container. Under _Advanced container configuration_, we could eg. overwrite the default `entrypoint` or `cmd` executed, or setup env variables. Click _update_ when we're done configuring
+
+In the _Task definition_, we can tell aws how to run our containers, think of the task as one remote machine that runs one or more containers. We're using **FARGATE** by default, so aws isn't really running an EC2 istance for our container, it runs it in serverless mode and starts the container whenever there's a request to it, so we just pay for the time the container is executed, not the time it's just sitting around idle. Just click _Next_
+
+In the _Service_ tab, we can control how a task should be executed, it's here we could rg. add a load balancer, jut click _Next_
+
+In the _Cluster_ tab, we configure the overall network in which our services run. If we had mutiple containers, we could group multiple containers in one cluster so they all can communicate to each other, jut click _Next_
+
+On the review page, click _Create_, then _view service_ once it's been created. To see our running app, click on _tasks_ and then on the one task id that's running to find our public ip where we can see our running application!
+
+Say we update our code, after rebuilding locally and pushing the new image to docker hub, to see our updated app online, in the _clusers_, _tasks_ tab, click on the _task definition_ for the running task and then click on _create new revision_, keep all the settings and click _create_ (aws will auto pull the new image), then click on _Actions_ and pick _Update Service_, keep all the settings and click on _Skip to review_ and then _Update Service_. A new task is now visible under the tasks tab, grab the new Public IP and we'll be able to see the new app
+
+nb: while a new IP is assigned to the updated app, it's still possible to link a domain name to the running Fargate ECS Task independent of the IP by using a load balancer as described [in the doc](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-load-balancing.html)
+
+To delete a service and cluster, in the cluster tab, click on the running service and click _delete_, then delete the cluster
+
+#### Multi-Container App on AWS ECS
+
+We'll use the app in `11-deployment-multi-container`, it's the same goals app used in the docker-compose section but missing its front-end, sow e have a node container and a mongodb container
+
+We won't use docker-compose for deployment
 
 ## Kubernetes
 
