@@ -433,7 +433,8 @@ We don't have to stick to the default ENV variable, we can use the `--env KEY=VA
 
 We can also specify a file that contains the env variables, eg if we have a `.env` file, run the container with `--env-file ./.env`, `docker run -p 3000:8000 --env-file ./.env -d --name feedback-app -v feedback:/app/feedback -v "/home/kevin/code/docker-bootcamp/5-data-volumes:/app:ro" -v /app/node_modules -v/app/temp --rm feedback-node-app:env`
 
-Using a `.env` file is better for security than including secure data directly into the `Dockerfile`. nb: otherwise, the values are "baked into the image" and everyone can read these values via `docker history IMAGE`
+Using a `.env` file is better for security than including secure data directly into the `Dockerfile`. Otherwise, the values are "baked into the image" and everyone can read these values via `docker history IMAGE`  
+We still want to add env variables keys with default values to the `Dockerfile`, though
 
 - Build-time ARGuments
   - Available inside of Dockerfile, NOT accessible in CMD or any application code
@@ -1361,7 +1362,39 @@ To delete a service and cluster, in the cluster tab, click on the running servic
 
 We'll use the app in `11-deployment-multi-container`, it's the same goals app used in the docker-compose section but missing its front-end, sow e have a node container and a mongodb container
 
-We won't use docker-compose for deployment
+We won't use docker-compose for deployment as we need to configure our containers separately when it comes to cpu capacity, etc. We'll just use the `docker-compose.yaml` as a source for what we need to do
+
+First the backend container, we need to create an image and push it to docker hub
+
+When deploying, we can't use the docker network approach of using services names (in our `mongoose.connect` address string) and have docker auto assign the right ip because once deployed the different containers might be on different machines. There is an exception, if with ECS, the containers are added to the same task then they'll be run on the same machine, but still, ECS won't create a docker network for them, but we can use `localhost` as an address, so we can change the connect string to use an env variable for the host, `mongodb://${process.env.MONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_URL}:27017/course-goals?authSource=admin`, and add that variable to the `backend.env`, `MONGODB_URL=mongodb`, and to the `Dockerfile`, `ENV MONGODB_URL=secret` we'll then use another value when we build for deployment. We're using env variables so we can use the exact same image in dev and prod
+
+Let's build our backend image, `docker build -t goals-node .`
+
+We now need to push it to docker hub. Create a new repository, `goals-node`, we can now retag, `docker tag goals-node kevinlabtani/goals-node`, then push to this repo with `docker push kevinlabtani/goals-node` nb. we're just pushing the image, so things like env variables aren't being used at the moment, these are being set in when we run a container based on the image
+
+On ECS, click on _Create Cluster_ (alternatively, we coumld use the wizard again), seleckevinlabtani/goals-nodet _Networking only_, then _Next_, name the cluster, check _create vpc_ while keeping all the defaults and click _create_
+
+Click on _view cluster_ and under _Task definitions_, Create a new task definition, pick FARGATE, then _Next step_. Name this Task Definition, pick the ecsTaskExecution as _Task Role_, pick the smallest size for the cpu and memory, click _add container_
+
+Now in the _Container definitions_ tab, name the container goals-backend, add the image from our docker hub, map port 80, under ENVIRONMENT, we don't want to use `nodemon` and bind mount in deployment, so we'll change the Command key to `node,app.js`.  
+We also need to specify our 3 environment variables; here the `MONGODB_NAME` need to be `localhost` as we've seen. We don't need to setup anything else, so click _Add_. nb: the volumes we have in dev are a bind mount for auto-reload and an anonymous volume so that the bind mount doesn't overwrite the node_modules folder, these aren't needed in production
+
+Second, the MongoDB container, click _add container_ again in the _Task definitions_ we're working on, name it mongodb, use mongo as the image, map port 27017, finally add the environment variables for root username and password.  
+We'll need to add storage, but we'll do that after, so click _Add_ to add the container
+
+We can leave all other settings as they are and click _Create_ to create our _Task definition_
+
+We can now launch a service based on this task. Go back to _clusters_, pick our goals-app cluster and click _Create_ under the Services tab. Pick FARGATE and under _Task Definition_ pick the _goals_ task we just created, name the service goals-service, nr of tasks is 1, we can keep the deployment type and click _Next step_.  
+On the next page, _Configure network_, pick the VPC that was created when we created the cluster and under subnets, add both subnets we're able to choose from, make sure auto-assign public ip is enabled and under _Load balancing_ choose _Application Load Balancer_, create the load balancer (next paragraph) and select it by its name, choose the `goals-backend:80:80` mapping and click _Add to load balancer_, add it to the target group we created in advance, finally click _Next step_
+
+We'll need to create an application load balancer and name it, it should be internet-facing, expose port 80 and be connected to our VPC, check the availability zone checkboxes and click _next_, pick the right security group besides the default one, click _configure routing_, name the group and choose ip as a target type, also set the health check path to `/goals` (requests sent to `/` will get a 404 which is treated as unhealthy by our load balancer) then click _next:register target_, click _next:review_ and finally _create_. Ignore auto scaling and click _Next step_ again, finally click _Create Service_ and then _View Service_
+
+On our Cluster > goals-serviceapp page, we now have a service, if we click on that service we see the task associated with that service and if we click on that task, we can find the public ip (and the two containers belonging to that task) and use Postman to test the api endpoints
+
+The public IP address change every time we deploy an updated container, that's why we created a load balancer. If we search load balancers in the AWS service list, we'll find the load balancer we created under the EC2 dashboard. That load balancer has a DNS name that looks like a domain name, `ecs-lb-783189166.us-east-2.elb.amazonaws.com` we can go (use in Postman) to that url instead of the ip address
+
+#### EFS Volumes with AWS ECS
+
 
 ## Kubernetes
 
