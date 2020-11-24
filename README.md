@@ -1232,7 +1232,7 @@ Containerized apps might need a build step (eg. React apps)
 
 Multi-Container projects might need to be split (or should be split) across multiple hosts / remote machines
 
-Trade-offs between control and responsibility might be worth it, if we have to do everything ourselves, we are responsible for security, etc
+Trade-offs between control and responsibility might be worth it, if we have to do everything ourselves we are responsible for security, updates, etc
 
 #### Bind Mounts, Volumes & COPY
 
@@ -1260,8 +1260,82 @@ We'll install docker on a remote host (eg. via SSH), push our local docker image
 We'll deploy to AWS EC2. AWS EC2 is a service that allows us to spin up and manage our own remote machines, the steps are:
 
 1. Create and launch EC2 instance, VPC and security group
-2. Configure security group to expose all required ports to WWW
-3. Connect to instance (SSH), install Docker and run the container
+2. Connect to instance (SSH), install Docker and run the container
+3. Configure security group to expose all required ports to WWW
+
+On the [EC2 Dashboard](https://console.aws.amazon.com/ec2/v2/home?region=us-east-1#Home:) click _launch instance_
+
+Choose the Amazon Linux 2 AMI x86 (Amazon Machine Image), then the t2.micro instance (free tier), click _next_ and make sure that a VPC is created, leaving all other settings as default, and finally click _review & launch_
+
+Clicking _launch_ will bring up a screen allowing us to create and download a new key pair, that will be needed later to connect to the instance via ssh. nb: if we loose the key, we'll have to delete the instance and create a new one, we can't get the key back!
+
+On the EC2 dashboard instances list screen, select our instance and click _connect_ and pick _ssh client_, then follow the instructions:
+
+1. Open an SSH client.
+2. Locate your private key file. The key used to launch this instance is `docker-basic.pem`
+3. Run this command, if necessary, to ensure your key is not publicly viewable.  
+   `chmod 400 docker-basic.pem`
+4. Connect to your instance using its Public DNS:  
+   `ec2-18-205-243-1.compute-1.amazonaws.com`
+   Example:  
+   `ssh -i "docker-basic.pem" ec2-user@ec2-18-205-243-1.compute-1.amazonaws.com`
+
+Now that we're connected, we need to install docker on this aws instance, we used an amazon AMI as they make it easy to install docker, we could always use the [traditional way](https://docs.docker.com/engine/install/) of installing docker on a linux machine
+
+1. `sudo yum update -y`
+2. `sudo amazon-linux-extras install docker`
+
+To start the docker service, run `sudo service docker start`
+
+Now we need to bring our local image to the aws instance,
+
+- Option 1: Deploy Source
+
+  - Build image on remote machine
+  - Push source code to remote machine, run `docker build` and then `docker run`
+
+- Option 2: Deploy Built Image
+
+  - Build image before deployment (on local machine)
+  - Just execute `docker run`
+
+Option 2 avoids unnecessary remote server work, so we'll do that
+
+Login on Docker Hub, Create a new repository, `node-deploy-1`, we can now push to this repo with `docker push kevinlabtani/node-deploy-1:tagname`
+
+We need to first build our image (we'll also add a `dockerignore`), `docker build -t node-dep-1 .` and then rename it, `docker tag node-dep-1 kevinlabtani/node-deploy-1`
+
+We can now push the image to docker hub, `docker push kevinlabtani/node-deploy-1` (we need to be logged in to be able to push)
+
+Back on the aws instance, we can now pull/run the image we just pushed to docker hub, `sudo docker run -d --rm -p 80:80 kevinlabtani/node-deploy-1` (need `sudo` for permissions, there are better ways though...)
+
+To test this app, go back to the aws EC2 dashboard where we can find an ipv4 public ip for our instance, `18.205.243.1`
+
+In the _Netword & Security_ tab of the dashboard, click on _security groups_, then click on the right security group (can be found on the instances tab, by clicking on our active instance) and add an inbound rule (only the ssh port, 22, is open by default) to open the port 80, allowing **HTTP** form **anywhere**
+
+We can now connect to our app!
+
+We could of course also use docker-compose, if we had a multi container app for example
+
+Say we update our code, the workflow to push the updated code is:
+
+- Locally
+  1. Rebuild `docker build -t node-dep-1 .`
+  1. Retag `docker tag node-dep-1 kevinlabtani/node-deploy-1`
+  1. Push to docker hub `docker push kevinlabtani/node-deploy-1`
+- On the aws instance
+  1. Stop the running container `sudo stop CONTAINER_NAME`
+  1. We need to pull manually, otherwise docker will just rerun a container based on the existing local image `sudo docker pull kevinlabtani/node-deploy-1`
+  1. Run a container based on the updated image `sudo docker run -d --rm -p 80:80 kevinlabtani/node-deploy-1`
+
+To shut the aws instance forever, from the EC2 dashboard, instance tab, select our instance and under _instance state_, pick terminate
+
+The disadvantages of this DIY approach is that we fully “own” the remote machine and we’re responsible for it and it’s security, we need to keep essentials software updated, manage network and security groups / firewall. On top of that, SSHing into the machine to manage it can be
+annoying
+
+#### Managed Remote Machines with AWS ECS
+
+With a managed remote machine, creation, management and updating is handled automatically, monitoring and scaling is simplified
 
 ## Kubernetes
 
