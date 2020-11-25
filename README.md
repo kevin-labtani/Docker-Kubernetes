@@ -1346,7 +1346,7 @@ The side drawer that appears allows us to specify the _Container definition_, or
 
 In the _Task definition_, we can tell aws how to run our containers, think of the task as one remote machine that runs one or more containers. We're using **FARGATE** by default, so aws isn't really running an EC2 istance for our container, it runs it in serverless mode and starts the container whenever there's a request to it, so we just pay for the time the container is executed, not the time it's just sitting around idle. Just click _Next_
 
-In the _Service_ tab, we can control how a task should be executed, it's here we could rg. add a load balancer, jut click _Next_
+In the _Service_ tab, we can control how a task should be executed, it's here we could eg. add a load balancer, jut click _Next_
 
 In the _Cluster_ tab, we configure the overall network in which our services run. If we had mutiple containers, we could group multiple containers in one cluster so they all can communicate to each other, jut click _Next_
 
@@ -1434,14 +1434,83 @@ Now we need to rebuild `docker build -t kevinlabtani/goals-node .` and push the 
 
 In AWS ECS, we now want to get rid of the MongoDB container. Go to _Task Definitions_, pick the latest goals task definition and create a new revision, now remove the mongodb container and the volume, and related EFS resources and security group. On the Node app container, we need to change the env variables to use the new ones from MongoDB Atlas. Then, create this new task revision and actions update service to force redeploy (we can go back to latest _Platform version_ as we don't use EFS anymore)
 
-#### "build-only" containers
-
-
-
-
 #### Multi-Stage Builds
 
+We'll work with `11-deployment-multi-container-atlas-frontend`, the same app as before with the frontend added back in
+
+Some apps require a build step, eg. an optimization script that needs to be executed after development but before deployment, so the dev setup is different from the prod setup. Our react frontend is like that
+
+The react app needs to be executed differently in dev and in prod so we'll have to setup two different environments. In production we don't need node like we do in dev, the js code itself once build with react is not executed with nodejs. We'll add a second dockerfile, `Dockerfile.prod` with the instructions needed to create a web server to serve the built react app
+
+First, we'll focus on building the react app with the `Dockerfile.prod`,
+
+```dockerfile
+FROM node:14-alpine
+
+WORKDIR /app
+
+COPY package.json .
+
+RUN npm install
+
+COPY . .
+
+CMD ["npm", "run", "build"]
+```
+
+Then, we'll add a second stage to serve the app with nginx. Every `FROM` instruction create a new stage in the `Dockerfile`  
+We have a `COPY` because we don't want our previous changes (ie. the build step) discarded. Note how we're aliasing the first stage and then copying from it. See the notes on docker hub [for the nginx image](https://hub.docker.com/_/nginx) for more info on the command we run
+
+```dockerfile
+FROM node:14-alpine as build
+
+WORKDIR /app
+
+COPY package.json .
+
+RUN npm install
+
+COPY . .
+
+RUN npm run build
+
+FROM nginx:stable-alpine
+
+COPY --from=build /app/build /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+```
+If we wanted, we could execute just the first stage `docker --target build -f Dockerfile.prod build .`, the `--target STAGE_NAME` flag allows us to target just a stage (not helpful here, but we could have eg. one stage for testing)
+
 #### Deploy React SPA
+
+There's one adjustment we have to make on our code as we're fetching from `localhost` right now, in prod the react code runs in the browser as we've seen before. If we planned to deploy the react app in the same task as our backend, the request would be to the same url, so we could just do the request to `/goals/` instead of `http://localhost/goals/`. We'll create a new task for the react app though, so the request wil be to a different ulr, we'll use an env variable to set the url. nb: the react app manage its own env variable separate from docker (once again, the code isn't run in the docker container but on the client's machine), when we run `npm start`, `process.env.NODE_ENV` is always equal to 'development'. We can get the production server url from the backend load balancer
+
+```js
+const backendUrl =
+  process.env.NODE_ENV === "development"
+    ? "http://localhost"
+    : "http://ecs-lb-783189166.us-east-2.elb.amazonaws.com";
+```
+
+Let's build the image for prod, `docker build -f Dockerfile.prod -t kevin-labtani/goals-react .` and push it to dockerhub on a new repo, `goals-react`
+
+To deploy our react frontend to ECS, the problem we have right now is that both our frontend and backend are mapped to port 80. We could serve our frontend from the backend since it's already running a node server and merge both in a single container. We could expose the backend on a different port. We won't do either, though. (This is not an ECS restriction btw, we can't have two webservers on the same host!) So what we need to is create a new _Task Definition_ in addition to the goals task definition we already have.
+
+Create a new Task Definition, pick FARGATE, name it goals-frontend, pick the same _task role_ as we did for the backend, pick the min amount of memory and cpu resources, then click _Add container_
+
+In the _Container definitions_, name the container goals-frontend, put our image from dockerhub, map port 80 (different task from the backend so this will work) Click _add_ to add the container, the create the Task definition
+
+We need to add a new application load balancer for the frontend app, from the AWS EC2 panel. Name it goals-react-lb It should be internet-facing, expose port 80 and be connected to our VPC, check the availability zone checkboxes and click _next_, pick the right security group besides the default one, click _configure routing_, name the group react-tg and choose ip as a target type, also set the health check path to `/` then click _next:register target_, click _next:review_ and finally _create_. Go to the load balancer config to find his url we'll later use to reach our app.
+
+We now need to add a service based on the task definition we just created, on the Task Definition tab, click _actions_ and pick _Create Service_. 
+
+Pick FARGATE and under _Task Definition_ pick the _goals_ task we just created, name the service goals-service, nr of tasks is 1, we can keep the deployment type to rolling update and click _Next step_.  
+On the next page, _Configure network_, pick the VPC that was created when we created the cluster and under subnets, add both subnets we're able to choose from, edit the _security groups_ to pick the existing one that is already exposing port 80 (goals--xxx), make sure auto-assign public ip is enabled and under _Load balancing_ choose _Application Load Balancer_,  and select it by its name, goals-react-lb. Pick the `goals-react:80:80` container and click _Add to load balancer_, add it to the target group we created, react-tg, finally click _Next step_. Ignore auto scaling and click _Next step_ again, finally click _Create Service_ and then _View Service_. This starts our fronent ap in a new service to run alongside our backend service, use the load balancer (goals-react-lb) url to check the app
+
+In then end we still have the same environment in dev and prod, but with the react app we need a different `Dockerfile` because of the build process
 
 ## Kubernetes Introduction & Basics
 
