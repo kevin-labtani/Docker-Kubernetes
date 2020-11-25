@@ -1395,10 +1395,56 @@ The public IP address change every time we deploy an updated container, that's w
 
 #### EFS Volumes with AWS ECS
 
+Right now, all the data is lost if we push an update or recreate new containers
 
-## Kubernetes
+AWS EFS --elastic file system - is a service that allows us to attach a file system to our serverless executed containers, these will survive even if the containers are recreated
 
-Kubernetes Introduction & Basics  
+To add a volume, go to _Task Definitions_, click on our goals Task definition and pick the latest and click _Create new revision_. Scroll down o volumes and click _add volume_, name it data and pick EFS as volume type, then pick the _File System ID_ for the security group we're creating in the next paragraph, then click _add_; we just defined the volume
+
+Click on _Amazon EFS console_ to create an EFS volume, click _create file system_, name it db-storage and add it to the right VPC, then click _Customize_. Move on to Step 2, network access, we should have the mounts, under security groups, choose the security group we're creating in the next paragraph for all mount targets (2?), click _next_ through to _create_
+
+On the EC2 server page, go to _security groups_ and create a new security group, name it efc-sc, add in to the VPC and add an inbound rule for type:NFS, source:custom, being the goals security group we're using to manage our containers, the port is 2049 (automatically assigned). Click _crreate security group_
+
+After having defined the volume, we want to connect it to our containers. Click on the mongo>DB container name to access its config, go down to _STORAGE AND LOGGING_, pick the data volume we just added as _Mount point_ and bind it to the `/data/db` path inside of the container, then click _update_, then _create_ to create this new task revision. Th ego to actions, pick _update service_ to force redeployment. nb. as of now, pick 1.4 for _Platform version_ as "latest" will fail; click through to _update service_
+
+Now even if we restart everything with brand new containers, as long as we keep that volume, our data will persist.
+
+There's still a problem though, as we're using rolling deployment, so a new task starts before the previous one finishes, and the previous one stops only if the new one is running successfully (which won't happen since we have an error), meaning two tasks with two mongoDB containers are trying to connect to the same file system at the same time. That will only happen when we deploy a new version though, so we won't look for a workaround as we plan to replace the mongoDB container anyway, so for now we'll just manually stop and remove the currently running task so that the to be deployed task has a change of becoming active
+
+#### Moving to MongoDB Atlas
+
+We can absolutely manage your own Database containers, but there are a few pitfalls
+
+- Scaling & managing availability can be challenging
+- Performance (also during traffic spikes) could be bad
+- Taking care of backups and security can be challenging
+
+So we should consider using a managed Database service (eg. AWS RDS, MongoDB Atlas), we're going to switch to MongoDB Atlas
+
+We'll be working with `11-deployment-multi-container-atlas` for this section, it's the same app as before
+
+Create a cluster, get the connection string `mongodb+srv://<username>:<password>@cluster0.jjobt.mongodb.net/<dbname>?retryWrites=true&w=majority` and replace the `mongoose.connect` connection string. If we wanted to use the cloud db for prod and a local mongodb container for dev, we'd need to make sure that the version of MongoDB used by the docker hub mongo image is the same as the version used by MongoDB Atlas, 4.2.10 right now. We'll also use MongoDB atlas in dev though, but with a different db, so we can change the connection string to `mongodb+srv://${process.env.MONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_URL}/${process.env.MONGODB_NAME}?retryWrites=true&w=majority`, adding an env variable for the db name
+
+We can remove the mongodb service in the `docker-compose.yaml` and its associated volume, as well as the `mongodb.env`
+
+We need to add an user and use credentials in MongoDB Atlas, we also need to manage Network Access, whitelist `0.0.0.0./0` to allow access from anywhere
+
+Give it a try, `docker-compose up`  
+Now we need to rebuild `docker build -t kevinlabtani/goals-node .` and push the new image to docker hub
+
+In AWS ECS, we now want to get rid of the MongoDB container. Go to _Task Definitions_, pick the latest goals task definition and create a new revision, now remove the mongodb container and the volume, and related EFS resources and security group. On the Node app container, we need to change the env variables to use the new ones from MongoDB Atlas. Then, create this new task revision and actions update service to force redeploy (we can go back to latest _Platform version_ as we don't use EFS anymore)
+
+#### "build-only" containers
+
+
+
+
+#### Multi-Stage Builds
+
+#### Deploy React SPA
+
+## Kubernetes Introduction & Basics
+
 Kubernetes: Data & Volumes  
 Kubernetes: Networking  
 Deploying a Kubernetes Cluster
