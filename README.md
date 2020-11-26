@@ -18,8 +18,9 @@ Le projet est basé sur le cours de Docker de [Academind](https://www.udemy.com/
   - [Deploying Docker Containers](#Deploying-Docker-Containers)
 
 - [Kubernetes Introduction & Basics](#Kubernetes-Introduction--Basics)
-  - [Kubernetes: Data & Volumes](#Kubernetes:-Data--Volumes)
-  - [Kubernetes: Networking](#Kubernetes:-Networking)
+  - [Kubernetes Core Concepts](#Kubernetes-Core-Concepts)
+  - [Kubernetes: Data & Volumes](#Kubernetes-Data--Volumes)
+  - [Kubernetes: Networking](#Kubernetes-Networking)
   - [Deploying a Kubernetes Cluster](#Deploying-a-Kubernetes-Cluster)
 
 ## Getting Started & Overview
@@ -1559,8 +1560,124 @@ Finally, We also have _Services_, a logical set of Pods with a unique, Pod and C
 
 nb. If we create our own Kubernetes Cluster from scratch, we need to create all these machines and then install the Kubernetes software on those machines, manage permissions etc. Once the Cluster is up and running, Kubernetes will create, run, stop and manage Containers for us
 
-### Kubernetes: Data & Volumes
+### Kubernetes Core Concepts
 
-### Kubernetes: Networking
+#### Installation
+
+What Kubernetes Will Do:
+
+- Create your objects (e.g. Pods) and manage them
+- Monitor Pods and re-create them, scale Pods etc.
+- Kubernetes utilizes the provided (cloud) resources to apply our configuration/goals
+
+What we need to do for Kubernetes to work:
+
+- Create the cluster and the node instances (worker + master nodes)
+- Setup API Server, kubelet and other Kubernetes services / software on Nodes
+- Create other (cloud) provider resources that might be needed (e.g. Load Balancer, Filesystems)
+
+(We can use tools like [kubermatic](https://www.kubermatic.com/) or a managed service like AWS EKS though)
+
+On our local machine, we need the `kubectl` command line tool used to send instructions to the cluster
+
+For testing purpose, we'll setup everything on our local machine, ie. the cluster too. We'll use [Minikube](https://minikube.sigs.k8s.io/docs/start/) for that, it'll setup a VM on our machine to simulate a single-node Cluster - the Master and Worker nodes combined in one single VM
+
+Since we're using Docker Desktop with WSL2, we can also simply enable kubernetes there; see more info [here](https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/) and [here](https://kubernetes.io/blog/2020/05/21/wsl-docker-kubernetes-on-the-windows-desktop/)  
+To add the K8s dashoard, run `kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0-rc6/aio/deploy/recommended.yaml`.  
+Check the resources it created with `kubectl get all -n kubernetes-dashboard`. ClusterIP are internal network address, we cannot reach it if we type the URL in our Windows browser, we need to create a temporary proxy `kubectl proxy`.  
+Now, go to http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/  
+To get a token to connect, run `kubectl -n kubernetes-dashboard describe secret $(kubectl -n kubernetes-dashboard get secret | grep admin-user | awk '{print $1}')` and copy then paste the token.
+
+#### Kubernetes Objects (Resources)
+
+Kubernetes works with Objects, and these objects can be created in two ways, Imperatively or Declaratively. We'll start with the imperative approach
+
+- The “Pod” Object is the smallest “unit” Kubernetes interacts with
+
+  - Contains and runs one or multiple containers (most common is one container per Pod)
+  - Pods contain shared resources (eg. volumes) for all Pod containers
+  - Has a cluster-internal IP by default (Containers inside a Pod can communicate via localhost)
+
+  Pods are designed to be ephemeral: Kubernetes will start, stop and replace them as needed  
+  For Pods to be managed for us, we need a “Controller” (eg. a “Deployment”)
+  nb: pods are somewhat similar to a task in AWS ECS
+
+- The “Deployment” Object controls (multiple) Pods
+
+  - We set a desired state, Kubernetes then changes the actual state (It defines which Pods and containers to run and the number of instances)
+  - Deployments can be paused, deleted and rolled back
+  - Deployments can be scaled dynamically and automatically (We can change the number of desired Pods as needed)
+
+  Deployments manage a Pod for us, we can also create multiple Deployments  
+  We therefore don’t directly control Pods, instead we use Deployments to set up the desired end state
+
+- The “Service” Object exposes Pods to the Cluster or Externally
+
+  - Pods have an internal IP by default – it changes when a Pod is replaced
+  - Services group Pods with a shared IP
+  - Services can allow external access to Pods
+
+  Without Services, Pods are very hard to reach and communication is difficult  
+  Reaching a Pod from outside the Cluster is not possible at all without Services
+
+#### First Deployment - Using the Imperative Approach
+
+We'll work with `12-kub-action` for this section
+
+First, we build an image, `docker build -t kub-first-app .`
+
+Second, we push this image to dockerhub, create a new repo named kub-first-app, then retag `docker tag kub-first-app kevinlabtani/kub-first-app` and push our local image `docker push kevinlabtani/kub-first-app`
+
+Now we want to "send" the image to K8s as part of a deployment that will then create the pod and the container running in the pod for us, and manage it for us
+
+The cluster should be already running though Docker Desktop
+
+Let's send the instruction to our cluster to create a new deployment object, `kubectl create deployment first-app --image=kevinlabtani/kub-first-app`
+
+We can't reach our app right now though, but we can check the K8s dashboard (see Installation section for how) to see that our app is indeed running without issues
+
+`kubectl get deployments` to get all the deployments  
+`kubectl get pods` to get all the pods  
+`kubectl delete deployment DEPL_NAME` to delete a deployment
+
+We now want to create a service to expose our pods, `kubectl expose deployment first-app --type=LoadBalancer --port=8080`.
+
+- `--type=ClusterIP` is the default type that would make the deployment reachable only form inside the cluster but with an addresss that doesn't change
+- `--type=NodePort` will expose the deployment with the ip address of the worker node
+- `--type=LoadBalancer` utilises a load balancer to generate an unique address for this service and evenly distribute incoming traffic accross all pods that are part of this service
+
+`kubectl get services` will list our services (the kubernetes service was created automatically)
+
+| NAME       | TYPE         | CLUSTER-IP    | EXTERNAL-IP | PORT(S)        | AGE  |
+| ---------- | ------------ | ------------- | ----------- | -------------- | ---- |
+| first-app  | LoadBalancer | 10.107.53.227 | localhost   | 8080:32331/TCP | 12s  |
+| kubernetes | ClusterIP    | 10.96.0.1     | <none>      | 443/TCP        | 143m |
+
+We can now go to http://localhost:8080/ to see our app being served
+
+#### Restarting Containers, Scaling, Updating Deployments, Rollbacks & Deleting
+
+We can crash our app by visiting `/error`, but if we go back to the root of our app, we see it still works! If we run `kubectl get pods` we see the status is _running_, but thats because it was restarted once. If we crash it again, the restart time takes longer - K8s takes longer an longer to rerun crashing pods to prevent infinite loops - but eventually it'sll get running again. We get that behavior because we created a deployment so the pod is being monitored and restarted if it fails
+
+If we don't have autoscaling in place, we can manually scale with `kubectl scale deployment/first-app --replicas=3`, a replica is an instance of a pod. Now we see 3 pods if we run `kubectl get pods` (we'll scale it back to 1, though)
+
+If we update our source code, we need to rebuild `docker build -t kevinlabtani/kub-first-app:2 .` - K8s will only download new images if they have a different tag, so we're using one here - and repush `docker push kevinlabtani/kub-first-app:2`  
+Now to update a deployment, we run `kubectl set image deployment/first-app kub-first-app=kevinlabtani/kub-first-app:2`  
+`kubectl rollout status deployment/first-app` will give us the current updating status
+
+If we mess up and run `kubectl set image deployment/first-app kub-first-app=kevinlabtani/kub-first-app:3` trying to update to an image that doesn't exist, we can rollback the deployment update with `kubectl rollout undo deployment/first-app`
+
+`kubectl rollout history deployment/first-app` will get a list of all the deployments we made, add the `--revision=REV_ID` to get more info about a specific deployment. If we wanted to go back to a specific deployment, we can run `kubectl rollout undo deployment/first-app --to-revision=REV_ID`
+
+We can delete a service with `kubectl delete service first-app`
+We can delete a deployment with `kubectl delete deployment first-app`
+
+
+#### The Declarative Approach
+
+
+### Kubernetes Data & Volumes
+
+### Kubernetes Networking
 
 ### Deploying a Kubernetes Cluster
