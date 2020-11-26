@@ -10,11 +10,17 @@ Le projet est basé sur le cours de Docker de [Academind](https://www.udemy.com/
   - [Data & Volumes (in Containers)](#data--volumes-in-containers)
   - [Containers & Networking](#Containers--Networking)
 - [Real Life Scenarios](#Real-Life-Scenarios)
+
   - [Multi-Container Projects](#Multi-Container-Projects)
   - [Using Docker-Compose](#Using-Docker-Compose)
   - [“Utility Containers”](#Utility-Containers)
   - [More Complex Setups](#More-Complex-Setups)
   - [Deploying Docker Containers](#Deploying-Docker-Containers)
+
+- [Kubernetes Introduction & Basics](#Kubernetes-Introduction--Basics)
+  - [Kubernetes: Data & Volumes](#Kubernetes:-Data--Volumes)
+  - [Kubernetes: Networking](#Kubernetes:-Networking)
+  - [Deploying a Kubernetes Cluster](#Deploying-a-Kubernetes-Cluster)
 
 ## Getting Started & Overview
 
@@ -1482,6 +1488,7 @@ EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
 ```
+
 If we wanted, we could execute just the first stage `docker --target build -f Dockerfile.prod build .`, the `--target STAGE_NAME` flag allows us to target just a stage (not helpful here, but we could have eg. one stage for testing)
 
 #### Deploy React SPA
@@ -1505,15 +1512,55 @@ In the _Container definitions_, name the container goals-frontend, put our image
 
 We need to add a new application load balancer for the frontend app, from the AWS EC2 panel. Name it goals-react-lb It should be internet-facing, expose port 80 and be connected to our VPC, check the availability zone checkboxes and click _next_, pick the right security group besides the default one, click _configure routing_, name the group react-tg and choose ip as a target type, also set the health check path to `/` then click _next:register target_, click _next:review_ and finally _create_. Go to the load balancer config to find his url we'll later use to reach our app.
 
-We now need to add a service based on the task definition we just created, on the Task Definition tab, click _actions_ and pick _Create Service_. 
+We now need to add a service based on the task definition we just created, on the Task Definition tab, click _actions_ and pick _Create Service_.
 
 Pick FARGATE and under _Task Definition_ pick the _goals_ task we just created, name the service goals-service, nr of tasks is 1, we can keep the deployment type to rolling update and click _Next step_.  
-On the next page, _Configure network_, pick the VPC that was created when we created the cluster and under subnets, add both subnets we're able to choose from, edit the _security groups_ to pick the existing one that is already exposing port 80 (goals--xxx), make sure auto-assign public ip is enabled and under _Load balancing_ choose _Application Load Balancer_,  and select it by its name, goals-react-lb. Pick the `goals-react:80:80` container and click _Add to load balancer_, add it to the target group we created, react-tg, finally click _Next step_. Ignore auto scaling and click _Next step_ again, finally click _Create Service_ and then _View Service_. This starts our fronent ap in a new service to run alongside our backend service, use the load balancer (goals-react-lb) url to check the app
+On the next page, _Configure network_, pick the VPC that was created when we created the cluster and under subnets, add both subnets we're able to choose from, edit the _security groups_ to pick the existing one that is already exposing port 80 (goals--xxx), make sure auto-assign public ip is enabled and under _Load balancing_ choose _Application Load Balancer_, and select it by its name, goals-react-lb. Pick the `goals-react:80:80` container and click _Add to load balancer_, add it to the target group we created, react-tg, finally click _Next step_. Ignore auto scaling and click _Next step_ again, finally click _Create Service_ and then _View Service_. This starts our fronent ap in a new service to run alongside our backend service, use the load balancer (goals-react-lb) url to check the app
 
 In then end we still have the same environment in dev and prod, but with the react app we need a different `Dockerfile` because of the build process
 
 ## Kubernetes Introduction & Basics
 
-Kubernetes: Data & Volumes  
-Kubernetes: Networking  
-Deploying a Kubernetes Cluster
+Kubernetes (K8s) is an open-source system for automating deployment, scaling & Load Balancing, and management of containerized applications
+
+Manual deployment of containers is hard to maintain, error-prone and annoying:
+
+- Containers might crash / go down and need to be replaced
+- We might need more container instances upon traffic spikes
+- Incoming traffic should be distributed equally
+
+Kubernetes simplifies the deployment and configuration of complex containerized applications and it helps with topics like scaling and load balancing
+
+Services like AWS ECS also help with that (with container health checks, automatic re-deployment, autoscaling and Load balancer) but we have to follow the AWS-specific rules, so we are "locked in", if we want to switch to a different provider/host, we have to "translate" the deployment configs, etc.
+
+With Kubernetes, we can set up a configuration which will work on any host that supports Kubernetes, no matter if it's a cloud provider or our own, Kubernetes-configured data center
+
+Typically, we will write down Kubernetes configuration files which describe our target state with a couple of Kubernetes commands, and then we bring that state to life on our cluster
+
+Kubernetes is not just a software you run on some machine, It’s a collection of concepts and tools  
+Basically, Kubernetes is like Docker-Compose for multiple machines
+
+A Kubernetes **Cluster** is required to run our Containers on, that cluster is simply a network of machines that are called "Nodes" in the Kubernetes world - and there are two kinds of **Nodes**:
+
+- The Master Node, it hosts the "Control Plane", so it's the control center which manages our deployed resources. It hosts:
+  - An API Server, responsible for communicating with the Worker Nodes kubelets
+  - A Scheduler, responsible for managing the Containers, e.g. determine on which Node to launch a new Container
+  - Kube-Controller-Manager, that watches and controls Worker Nodes, manages the correct number of Pods & more
+  - Cloud-Controller-Manager, that works like the Kube-Controller-Manager but for a specific Cloud Provider (eg. AWS)
+- Worker Nodes, machines where the actual containers are running on inside of Pods, with the following running "tools"/processes:
+
+  - Kubelet service, the counterpart for the Master Node API Server, communicates with the" control plane"
+  - Container runtime (e.g. Docker), used for actually running and controlling the containers
+  - Kube-proxy service, responsible for container network (and cluster) communication and access
+
+  With Kubernetes, we don't manage containers but rather **Pods** which then manage the containers, a pod contains one or more container (typically one though) and any configuration as well as volumes required by the container/s
+
+Finally, We also have _Services_, a logical set of Pods with a unique, Pod and Container independent IP address
+
+nb. If we create our own Kubernetes Cluster from scratch, we need to create all these machines and then install the Kubernetes software on those machines, manage permissions etc. Once the Cluster is up and running, Kubernetes will create, run, stop and manage Containers for us
+
+### Kubernetes: Data & Volumes
+
+### Kubernetes: Networking
+
+### Deploying a Kubernetes Cluster
