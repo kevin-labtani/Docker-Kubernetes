@@ -1662,6 +1662,7 @@ We can crash our app by visiting `/error`, but if we go back to the root of our 
 If we don't have autoscaling in place, we can manually scale with `kubectl scale deployment/first-app --replicas=3`, a replica is an instance of a pod. Now we see 3 pods if we run `kubectl get pods` (we'll scale it back to 1, though)
 
 If we update our source code, we need to rebuild `docker build -t kevinlabtani/kub-first-app:2 .` - K8s will only download new images if they have a different tag, so we're using one here - and repush `docker push kevinlabtani/kub-first-app:2`  
+nb: If we specify the `latest`tag, `kub-first-app:latest`, then K8s will always pull the Image when building  
 Now to update a deployment, we run `kubectl set image deployment/first-app kub-first-app=kevinlabtani/kub-first-app:2`  
 `kubectl rollout status deployment/first-app` will give us the current updating status
 
@@ -1688,7 +1689,7 @@ Declarative
 - A config file is defined and applied to change the desired state
 - Comparable to using `docker-compose` with compose files
 
-We'll create a `deployment.yaml` (the name is up to us), see the [docs](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.19/#deployment-v1-apps). The `kind` key specifies what kind of K8s object we want to create. The `metadata` key specifies things like app name.  
+We'll create a `deployment.yaml` (the name is up to us), see the [docs](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.19/#deployment-v1-apps). The `kind` key specifies what kind of K8s object we want to create. The `metadata` key specifies things like app name.
 
 The `spec` key defines the specifications for this deployment. The `template` key defines the pods to be created by this deployment
 
@@ -1743,11 +1744,52 @@ spec:
 
 `kubectl apply -f=service.yaml` will apply the config to the connected cluster, the app is now served to the ourside world, `kubectl get services`
 
-To make changes (update) to our resources, we can just change the `.yaml` file and apply it again, eg. change the image and then apply the `.yaml` again
+To make changes (update) to our resources, we can just change the `.yaml` file and apply it again, eg. change the image source in the `deployment.yaml` and then apply the `.yaml` again. (We still need to build then push the image to docker hub, of course)
 
 To delete resources, run `kubectl delete -f=deployment.yaml -f=service.yaml`, we could still use the imperative way though, `kubectl delete deployment second-app`
 
+If we want, we can merge `.yaml` files with all the related resources in it, separating the reources with 3 dashes `---`. Here we'll create `master-deploy.yaml`. nb: it's good practice to put services first
+
+#### More on Selectors
+
+We'll work with `13-kub-first-app-declarative-2` for this section
+
+`matchExpressions` is a more powerful way of selecting things, as we can use operators `In`, `NotIn`, `Exists` and `DoesNotExist`
+
+eg, in our `deployment.yaml`, select all pods where `app` label key has a value of `second-app` or `first-app`
+
+```yaml
+matchExpressions:
+  - { key: app, operator: In, values: [second-app, first-app] }
+```
+
+We can also use selectors with the imperative approach, the `-l` flag allow us to select objects by their label, eg. (we've added labels in the two yaml files first) `kubectl delete deployments, services -l group=example` will tell K8s to delete the deployments and services with the label `group: example`
+
+#### Liveness Probes & Extra Config Options
+
+A liveness probe is used by K8s to check if a pod & container in pods are healthy or not
+
+In our `deployment.yaml`, we can add a `livenessProbe` key to override the default K8s behavior,
+
+We'll also add an extra option, `imagePullPolicy` because we want K8s to always pull images when we update the image, even if no image tag is specified
+
+```yaml
+[...]
+      containers:
+        - name: second-node
+          image: kevinlabtani/kub-first-app:2
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 10
+            initialDelaySeconds: 5
+```
+
 ### Kubernetes Data & Volumes
+
+We'll work with `14-kub-data` for this section
 
 ### Kubernetes Networking
 
