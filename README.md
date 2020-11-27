@@ -1622,7 +1622,7 @@ Kubernetes works with Objects, and these objects can be created in two ways, Imp
 
 #### First Deployment - Using the Imperative Approach
 
-We'll work with `12-kub-action` for this section
+We'll work with `12-kub-first-app` for this section
 
 First, we build an image, `docker build -t kub-first-app .`
 
@@ -1672,9 +1672,80 @@ If we mess up and run `kubectl set image deployment/first-app kub-first-app=kevi
 We can delete a service with `kubectl delete service first-app`
 We can delete a deployment with `kubectl delete deployment first-app`
 
-
 #### The Declarative Approach
 
+We'll work with `13-kub-first-app-declarative` for this section
+
+Imperative
+
+- `kubectl create deployment ...`
+- Individual commands are executed to trigger certain Kubernetes actions
+- Comparable to using `docker run` only
+
+Declarative
+
+- `kubectl apply –f config.yaml`
+- A config file is defined and applied to change the desired state
+- Comparable to using `docker-compose` with compose files
+
+We'll create a `deployment.yaml` (the name is up to us), see the [docs](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.19/#deployment-v1-apps). The `kind` key specifies what kind of K8s object we want to create. The `metadata` key specifies things like app name.  
+
+The `spec` key defines the specifications for this deployment. The `template` key defines the pods to be created by this deployment
+
+The `selector` key defines which pods match this deployment as deployments are dynamic objects, it tells K8s which pods this deployment should control. we can `matchLabels` or `matchExpressions`. nb: the labels keys/values are up to us, we have two as an example btw
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: second-app-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: second-app
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: second-app
+        tier: backend
+    spec:
+      containers:
+        - name: second-node
+          image: kevinlabtani/kub-first-app:2
+        # - name: ...
+        #   image: ...
+```
+
+`kubectl apply -f=deployment.yaml` will apply the config to the connected cluster, we can now see our deployments and pods running, `kubectl get deployments`; The app is not reachable yet though, we need to add a service object
+
+We now need to create a `service.yaml`  
+nb:the syntax for the selector is different because the Service ressource is an older spec, and it can olny match labels. We also don't need to select by all the labels, here we only need one. Type can be `ClusterIP`, `NodePort`, `LoadBalancer`, as we've seen before. `port` is the port we want to expose the app on, `targetPort` is the port inside the container
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app: second-app
+  ports:
+    - protocol: "TCP"
+      port: 80
+      targetPort: 8080
+    # - protocol: 'TCP'
+    #   port: 443
+    #   targetPort: 443
+  type: LoadBalancer
+```
+
+`kubectl apply -f=service.yaml` will apply the config to the connected cluster, the app is now served to the ourside world, `kubectl get services`
+
+To make changes (update) to our resources, we can just change the `.yaml` file and apply it again, eg. change the image and then apply the `.yaml` again
+
+To delete resources, run `kubectl delete -f=deployment.yaml -f=service.yaml`, we could still use the imperative way though, `kubectl delete deployment second-app`
 
 ### Kubernetes Data & Volumes
 
