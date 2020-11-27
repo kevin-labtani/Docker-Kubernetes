@@ -1789,8 +1789,135 @@ We'll also add an extra option, `imagePullPolicy` because we want K8s to always 
 
 ### Kubernetes Data & Volumes
 
-We'll work with `14-kub-data` for this section
+We'll work with `14-kub-data` for this section, an API with a POST and a GET request handler, the POST route allow us to create a `.txt` file saved to the hdd
+
+Run the app locally with `docker-compose up -d --build`; we can then use Postman requests to `localhost/story` to interact with our API. We're using a named volume, so if we take our container down and recreate a new one, the data is still saved
+
+Let's now see how we work with K8s and volumes; we need to define "state" first
+
+State is data created and used by your application which must not be lost; We have 2 kind of states:
+
+- User-generated data, user accounts, …: Often stored in a database, but could also be files (e.g.uploads)
+- Intermediate results derived by the app; Often stored in memory, temporary database tables or files
+
+##### Getting our Demo App Running on K8s Cluster
+
+We'll build `docker build -t kevinlabtani/kub-data:latest .` and push `docker push kevinlabtani/kub-data:latest` our local app
+
+We'll create `.yaml` files for the deployment and services object
+
+`deployment.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: story-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: story
+  template:
+    metadata:
+      labels:
+        app: story
+    spec:
+      containers:
+        - name: story
+          image: kevinlabtani/kub-data:latest
+```
+
+`service.yaml`
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: story-service
+spec:
+  selector:
+    app: story
+  type: LoadBalancer
+  ports:
+    - protocol: "TCP"
+      port: 80
+      targetPort: 3000
+```
+
+We now apply our service and deployment, `kubectl apply -f=service.yaml -f=deployment.yaml`, and test that GET and POST Postman requests to `localhost/story` are working correctly
+
+#### Kubernetes Volumes
+
+Right now we're not using volumes, so the data will be lost if the container restarts
+
+Kubernetes can mount Volumes into Containers  
+A broad variety of Volume types / drivers are supported such as ”Local” Volumes (i.e. on Nodes) and Cloud-provider specific Volumes  
+Volume lifetime depends on the Pod lifetime. Volumes survive Container restarts (and removal), but Volumes are removed when Pods are destroyed ie. Volumes are not necessarily persistent
+
+##### "emptyDir" Volume Type
+
+Right now if we go to `/error` we'll crash the app and K8s will relaunch a container and all our data is gone
+
+We have to define volumes in the place where we define and configure our pods (as volumes are attached to pods), in the `deployment.yaml` in our case, and all the containers in a pod wil lbe able to use the volume
+
+```yaml
+[...]
+      containers:
+        - name: story
+          image: kevinlabtani/kub-data:latest
+          imagePullPolicy: Always
+          volumeMounts:
+            - mountPath: /app/story
+              name: story-volume
+      volumes:
+        - name: story-volume
+          emptyDir: {}
+```
+
+An [emptyDir volume](https://kubernetes.io/docs/concepts/storage/volumes/) is first created when a Pod is assigned to a node, and exists as long as that Pod is running on that node. Containers can then write to that directory
+
+Now if we create some data with a POST request to `/story`, then crash the app with a GET request to `/error`, after the container has restarted, we can still get the data with a GET request to `/story` (initially we can't get story at the app tries to read from a file that isn't there)
+
+##### "hostPath" Volume Type
+
+If we have multiple (say, 2) replicas, when we crash one pod, traffic is redirected to the other one, and the data isn't available anymore until the first pod is restarted
+
+One way of working around that is to use a hostPath volume. A hostPath volume mounts a file or directory on the host's Node filesystem into our pod. This way multiple pods can share the same hostPath volume. nb: it won't solve the problem of having multiple nodes
+
+`path` is the path on the host machine  
+`type: DirectoryOrCreate` will create the directory specified under `path` if it doesn't exist
+
+```yaml
+[...]
+spec:
+  replicas: 2
+[...]
+      containers:
+        - name: story
+          image: kevinlabtani/kub-data:latest
+          imagePullPolicy: Always
+          volumeMounts:
+            - mountPath: /app/story
+              name: story-volume
+      volumes:
+        - name: story-volume
+          hostPath:
+            path: /data
+            type: DirectoryOrCreate
+```
+
+After applying our deployment, we see that the existing pods are getting terminated and 2 new ones are recreated. Now if we crash one pod, we still get the saved data from the other pod
+
+#### "CSI" Volume Type
+
+The Container Storage Interface volume type defines a standard interface for container orchestration systems (like Kubernetes) and anyone can build driver solutions utilizing this interface, eg. there's an AWS EFS CSI driver
+
 
 ### Kubernetes Networking
 
 ### Deploying a Kubernetes Cluster
+
+```
+
+```
