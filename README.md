@@ -1937,7 +1937,7 @@ Persistent Volumes
 
 #### Defining a Persistent Volume
 
-We'll work with `15-kub-data-persistent`
+We'll work with `15-kub-data-persistent` fo this section
 
 We'll write a `host-pv.yaml` to create a persistent volume
 
@@ -2012,6 +2012,65 @@ Apply the new & updated yaml files with `kubectl apply -f=host-pv.yaml -f=host-p
 `kubectl get pvc` to get a list of all persistent volumes claims
 
 The biggest difference is that the volume is now independent from the pod AND the node, and not just with hostPath but with any supported type for persistent volumes
+
+If we go back to our definition of state, we should note that for intermediate results, pod specific volumes might be enough, we might not need a persistent volume
+
+#### Environment Variables & ConfigMaps
+
+We'll work with `16-kub-data-env` fo this section. The same as before, but we're replacing the `story` folder with an env variable
+
+We'll need to rebuild the image and push it
+
+In the `deployment.yaml` we'll add an `env` key to the containers definition
+
+```yaml
+containers:
+  - name: story
+    image: kevinlabtani/kub-data:latest
+    imagePullPolicy: Always
+    env:
+      - name: STORY_FOLDER
+        value: "story"
+    volumeMounts:
+      - mountPath: /app/story
+        name: story-volume
+```
+
+If we don't want to setup our env variables in the container specs, we can use a separate `ConfigMap` ressource. We'll create an `environment.yaml`
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-store-env
+data:
+  folder: "story"
+  # key: value..
+```
+
+Then, we apply it, `kubectl apply -f=environment.yaml`
+
+`kubectl get configmap` will list all oru configmaps
+
+Now we want to utilise this configmap, in the `deployment.yaml`
+
+```yaml
+containers:
+  - name: story
+    image: kevinlabtani/kub-data:latest
+    imagePullPolicy: Always
+    env:
+      - name: STORY_FOLDER
+        valueFrom:
+          configMapKeyRef:
+            name: data-store-env
+            key: folder
+    volumeMounts:
+      - mountPath: /app/story
+        name: story-volume
+```
+
+Then, we need to reapply the `deployment.yaml`
 
 ### Kubernetes Networking
 
