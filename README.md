@@ -1913,11 +1913,106 @@ After applying our deployment, we see that the existing pods are getting termina
 
 The Container Storage Interface volume type defines a standard interface for container orchestration systems (like Kubernetes) and anyone can build driver solutions utilizing this interface, eg. there's an AWS EFS CSI driver
 
+#### Persistent Volumes
+
+All the volumes we've seen so far Volumes are destroyed when a is removed
+
+hostPath partially works around that in “OneNode” environments, but it won't work in a real cluster on eg. AWS
+
+Pod- and Node-independent Volumes are sometimes required
+
+Persistent Volumes are inside the cluster and detached from the pod & node, instead we have Persistent Volume claims that are part of pods that reach out to the Persistent Volume.
+
+”Normal” Volumes
+
+- Volume is attached to Pod and Pod lifecycle
+- Defined and created together with Pod
+- Repetitive and hard to administer on a global level
+
+Persistent Volumes
+
+- Volume is a standalone Cluster resource (NOT attached to a Pod)
+- Created standalone, claimed via a PVC
+- Can be defined once and used multiple times
+
+#### Defining a Persistent Volume
+
+We'll work with `15-kub-data-persistent`
+
+We'll write a `host-pv.yaml` to create a persistent volume
+
+We'll use the hostPath type, this only work on a single node testing environment like we have there, but what we'll learn will also hold true later
+
+The `capacity` is the overall available capacity for the persisent volume, `1Gi` is 1 gigabyte
+
+`VolumeMode` is either `Filesystem` or `Block`, see [here](https://www.computerweekly.com/feature/Storage-pros-and-cons-Block-vs-file-vs-object-storage) for ref
+
+`accessModes` is `ReadWriteMany`:can be mounted as a r/w volume by many node, `ReadOnlyMany`:read only by multiple nodes and `ReadWriteOnce`:can be mounted as a r/w volume by a single node (multiple pods ok as long as there's on the same node). We'll pick `ReadWriteOnce` as that's the only one available with the hostPath type
+
+The storage class defines to K8s defines how the storage should be provisionned, we'l use the default one `storageClassName: standard`
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: host-pv
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data
+    type: DirectoryOrCreate
+```
+
+#### Creating a Persistent Volume Claim
+
+In order to use the Persistent Volume, the pods need to define a Persistent Volume Claim
+
+We'll write a `host-pvc.yaml` to create a persistent volume claim
+
+nb: we could write everything in one single `.yaml` file
+
+In `spec`, we could claim volume by ressources rather than by name
+
+The `resources` key specifies which resource we want to get with this claim, we can pick eg. how much storage we want to request
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: host-pvc
+spec:
+  volumeName: host-pv
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+Now we need to connect the claim to a pod, in `deployment.yaml`, through the `volumes` key
+
+```yaml
+volumes:
+  - name: story-volume
+    persistentVolumeClaim:
+      claimName: host-pvc
+```
+
+#### Using a Claim in a Pod
+
+Apply the new & updated yaml files with `kubectl apply -f=host-pv.yaml -f=host-pvc.yaml -f=deployment.yaml`
+
+`kubectl get pv` to get a list of all persistent volumes
+`kubectl get pvc` to get a list of all persistent volumes claims
+
+The biggest difference is that the volume is now independent from the pod AND the node, and not just with hostPath but with any supported type for persistent volumes
 
 ### Kubernetes Networking
 
 ### Deploying a Kubernetes Cluster
-
-```
-
-```
