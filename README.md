@@ -1937,7 +1937,7 @@ Persistent Volumes
 
 #### Defining a Persistent Volume
 
-We'll work with `15-kub-data-persistent` fo this section
+We'll work with `15-kub-data-persistent` for this section
 
 We'll write a `host-pv.yaml` to create a persistent volume
 
@@ -2017,7 +2017,7 @@ If we go back to our definition of state, we should note that for intermediate r
 
 #### Environment Variables & ConfigMaps
 
-We'll work with `16-kub-data-env` fo this section. The same as before, but we're replacing the `story` folder with an env variable
+We'll work with `16-kub-data-env` for this section. The same as before, but we're replacing the `story` folder with an env variable
 
 We'll need to rebuild the image and push it
 
@@ -2073,5 +2073,240 @@ containers:
 Then, we need to reapply the `deployment.yaml`
 
 ### Kubernetes Networking
+
+We'll work with `17-kub-network` for this section. This application consists in 3 different backend API that will work together, an auth API, an users API to create/login users (in dummy mode, ie. we're nto storing data) and a tasks API (tasks will be stored in a file) that gets a token which identifies a logged in user and reach ou tto the auth API to verify this user
+
+The Auth API and Users API are in the same pod and are using Pod--internal comunication  
+The Tasks API run in an other pod  
+Both pods are part of the cluser and both the users & tasks API are reachable by the client (eg. Postman). The auth API isn't directly reachable by the client
+
+Eventually, we'll want to run the Auth API in its own separate pod
+
+#### Creating a First Deployment
+
+We'll start with just the users API, `docker build -t kevinlabtani/kub-demo-users .` then `docker push kevinlabtani/kub-demo-users`
+
+We'll create kubernetes folder for all the `.yaml files`
+
+`kubectl apply -f=users-deployment.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: users-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: users
+  template:
+    metadata:
+      labels:
+        app: users
+    spec:
+      containers:
+        - name: users
+          image: kevinlabtani/kub-demo-users
+```
+
+`kubectl apply -f=users-service.yaml`
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: users-service
+spec:
+  selector:
+    app: users
+  type: LoadBalancer
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+```
+
+We can test the API by sending a POST request to localhost:8080/login and localhost:8080/singup, we'll get back a token
+
+We'll now add the auth API to the same pod as the users API. First, we'll replace the dummy code in the `users-app.js` with real calls to the auth API (line 26 & 58), using env varaible for the domain name, we'll also update the `docker-compose.yaml` file to make sure that it still works. We'll then rebuild and repush the users API image
+
+Then we'll build and push the auth API image `docker build -t kevinlabtani/kub-demo-auth .`  
+We'll use the same deployment file as we want it in the same pod. We're not changing the service yaml file as we don't wish to expose the auth API to the outside wold.
+
+For pod internal communication, we can just send the request through the localhost address
+
+`kubectl apply -f=users-deployment.yaml`
+
+```yaml
+[...]
+containers:
+  - name: users
+    image: kevinlabtani/kub-demo-users:latest
+    env:
+      - name: AUTH_ADDRESS
+        value: localhost
+  - name: auth
+    image: kevinlabtani/kub-demo-auth:latest
+```
+
+`kubectl get pods` shows us we do indeed have 2 container running, and testing with Postman confirms that our routes are working
+
+#### Creating Multiple Deployments
+
+We also want to deploy the Tasks API in a separate pod and make sure we can send request there too. We also need to make sure the tasks API is able to communicate with the auth API even though it's in a different pod
+
+First, we need a new deployment for the auth API so that the auth and user containers no longer run in the same pod.
+
+`auth-deployment.yaml`  
+we've also removed the auth container from `users-deployment.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth
+  template:
+    metadata:
+      labels:
+        app: auth
+    spec:
+      containers:
+        - name: auth
+          image: kevinlabtani/kub-demo-auth:latest
+```
+
+This new pod will reachable only inside the cluster. The problem is that the IP address for that pod could change if it's scaled or it has crashed and restarted, so we do need to create a `auth-service.yaml` for it
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+spec:
+  selector:
+    app: auth
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+```
+
+`kubectl apply -f=auth-service.yaml -f=auth-deployment.yaml`
+
+##### Pod-to-Pod Communication with IP Addresses & Environment Variables
+
+If we run `kubectl get services`, we can get the ip for the auth-service, (again, that IP is only reachable inside the cluster) and use it as AUTH_ADDRESS inside the `users-deployment.yaml`, then reapply it
+
+```yaml
+[...]
+containers:
+  - name: users
+    image: kevinlabtani/kub-demo-users:latest
+    env:
+      - name: AUTH_ADDRESS
+        value: "10.98.68.222"
+```
+
+` kubectl get pods` show we now have two pods running, and we can test our APIs (localhost:8080/login, localhost:8080/signup) with Postman and see it's still working
+
+While the ip address is stable and won't change all the time, getting the ip address is a bit anoying and there's a more convenient way; K8s provides us with auto-generated env variables with info about the services that are running in the cluser
+
+`AUTH_SERVICE_SERVICE_HOST` is the env variable we need, with the ip address auto assigned for the auth service. We'll need to modify the code in `users-app.js` again to use that env variable name (ie. `process.env.AUTH_SERVICE_SERVICE_HOST`), though, and then rebuild, repush and redeploy. We'll also remove the env variable from the `users-deployment.yaml` since it's no longer needed
+
+```yaml
+[...]
+containers:
+  - name: users
+    image: kevinlabtani/kub-demo-users:latest
+```
+
+Again, we can test our APIs (localhost:8080/login, localhost:8080/signup) with Postman and see it's still working
+
+##### Using DNS for Pod-to-Pod Communication
+
+There's a more convenient way that using env variables for pod to pod communication, because K8s clusters by default come with a build-in service called CoreDNS that can be used to create domains that are known inside of the cluster
+
+The pattern for these domains is quite simple, if we want to send a request to the auth service named "auth-service.NAMESPACE_NAME", we can just use that name as a domain to send request to; it's quite similar to docker-compose
+
+` kubectl get namespace` will list the namespaces, the default namespace is the one our services and deployments are assigned if we do'nt specify one
+
+We'll go back and remodify our code in `users-app.js` to use `AUTH_ADDRESS` as an env variable name, rebuild, repush and add it back to `users-deployment.yaml` with the right value and then reapply it
+
+```yaml
+[...]
+containers:
+  - name: users
+    image: kevinlabtani/kub-demo-users:latest
+    env:
+      - name: AUTH_ADDRESS
+        value: "auth-service.default"
+```
+
+Again, we can test our APIs (localhost:8080/login, localhost:8080/signup) with Postman and see it's still working
+
+#### Adding our Tasks API
+
+We now will add our Tasks api, it also send a request to the auth api, we'll need to modify the address we send a request to though, using an env variable. We'll be using our own env variable `AUTH_ADDRESS` again, rahter than the one auto-generated by K8s. We'll also update the `docker-compose.yaml` file to make sure that it still works
+
+Build and push the tasks API image, `docker build -t kevinlabtani/kub-demo-tasks .` & `docker push kevinlabtani/kub-demo-tasks`
+
+`kubectl apply -f=tasks-deployment.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tasks-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tasks
+  template:
+    metadata:
+      labels:
+        app: tasks
+    spec:
+      containers:
+        - name: tasks
+          image: kevinlabtani/kub-demo-tasks:latest
+          env:
+            - name: AUTH_ADDRESS
+              value: "auth-service.default"
+            - name: TASKS_FOLDER
+              value: tasks
+          volumeMounts:
+            - mountPath: /app/tasks
+              name: tasks-volume
+      volumes:
+        - name: tasks-volume
+          emptyDir: {}
+```
+
+`kubectl apply -f=tasks-service.yaml`
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: tasks-service
+spec:
+  selector:
+    app: tasks
+  type: LoadBalancer
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+```
+
+We can now test the task API with Postman, GET to localhost:8000/tasks, add a header "Authorization" "Bearer abc"; we'll get `Loading the tasks failed.` initially because there are no tasks, add one with a POST request to the same address and then the GET route will work
 
 ### Deploying a Kubernetes Cluster
