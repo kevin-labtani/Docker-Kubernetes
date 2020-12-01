@@ -2419,3 +2419,107 @@ In `nginx.conf` we can use `http://tasks-service.default:8000/` for the `proxy_p
 In `App.js` we can now send the fetch requests to `/api/tasks`. Then rebuild, repush and reapply. We can see our app now works without errors.
 
 ### Deploying a Kubernetes Cluster
+
+We need to setup the infrastructure for K8s to run on, we need to replace minikube or Docker Desktop we've used so far
+
+Our deployment options are
+
+- Custom Data Center & Install + configure everything on our own
+- Cloud Provider & Install + configure most things on our own (eg. EC2 + [kOps](https://github.com/kubernetes/kops))
+- Cloud Provider & Install + Use a managed service (then we just have to define our cluster architecture)
+
+We'll be using AWS EKS (Elastic Kubernetes Service), the advantages over AWS ECS that we used before are:
+
+- Managed service for Kubernetes deployments
+- No AWS-specific syntax or philosophy required
+- Use standard Kubernetes configurations and resources
+
+#### Preparing the Starting Project
+
+We'll work with `19-kub-deploy` for this section. We have an users and an auth API, The users API communicates with the auth API and the auth API isn't reachable from the outside
+
+We already have `auth.yaml` and `users.yaml`, both combine a deployment and a service in a single `.yaml` file
+
+Note that for the users API Deployment we have an env variable for the AUTH_API_ADDRESS much like we had in the last section. We also have an env variable for mongoDB as we're using mongoDB to store our data
+
+We of course have to build and push both our images, `docker build -t kevinlabtani/kub-dep-users .`, `docker build -t kevinlabtani/kub-dep-auth .`, etc.
+
+This time we won't apply the `.yaml` locally to our cluster, we'll directly dive into AWS EKS
+
+#### Creating & Configuring the Kubernetes Cluster with EKS
+
+Go to the [AWS Management Console](https://console.aws.amazon.com/console/) and search EKS
+
+Pick a cluster name - kub-dep-demo - and click _Next step_, we're then taken to a page where we can configure our cluster
+
+step1 Configure cluster:  
+Pick the _Cluster Service Role_ we're creating next paragraph; EKS behind the scenes will create some EC2 instances, EKS needs permissions to do that, and permissions are managed through the IAM console, click on it.
+
+Click _create role_ in the IAM console, pick AWS service, scroll down to EKS, click on it and choose _EKS - Cluster_ (a predifine role with all the neede dpermissions already assigned). Click _Next:Permissions_ then _Next:Tags_, then _Next:Review_, then name the role eksClusterRole and click _create role_
+
+step2 Networking:  
+Click on services in the navbar, search _CloudFormation_ and open it in a new tab
+
+Click _create stack_, leave the default and paste in the url from [this page](https://docs.aws.amazon.com/eks/latest/userguide/create-public-private-vpc.html#create-vpc) as _S3 URL_. Click _Next_
+
+Pick a name - eksVpc - and leave all defaults, click _Next_
+
+At the end, click _Create stack_; this will create a VCP network for us; close this page
+
+Go back to the _Specify networking_ page and pich the VPC we just created
+
+For _Cluster endpoint access_, pick _Public and private_, then click _Next_
+
+step3:  
+click _Next_
+
+step4:  
+click _create_
+
+We now have our cluster created
+
+We need to modify `kubectl` to be able to communicate with our EKS cluster. The config file created by docker-desktop is located at `C:\Users\kevin\.kube\config`, it's best to save a copy of the existing config file and rename it. We'll use the aws cli to do that so we need to [install it](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2-linux.html)
+
+On AWS click on our account nameang go to _My Security Credentials_. Pick _Access Key_ and _Create New Access Key_, download the key file and find an AWSAccessKeyID and a AWSSecretKey. Run `aws configure` and enter our credentials
+
+Now, once the EKS cluster is active, run `aws eks --region us-east-1 update-kubeconfig --name kub-dep-demo`, this will update our .kube config file with everything it needs for `kubectl` to communicate with our AWS EKS cluster
+
+Now, eg. `kubectl get pods` will communicate with our AWS EKS cluster
+
+#### Adding Worker Nodes
+
+Go to the _Compute_ tab and click _Add Node Group_
+
+step1:  
+Name it demo-dep-nodes, and add the IAM role eksNodeGroup we're creating in the next paragraph through the IAM console, leave eveything else default and click next
+
+The nodes (EC2 instances) wil need their own specific permissions. Click _create role_ in the IAM console, pick AWS service, scroll down to EC2, click on it and then click _Next:Permissions_, search for EKS and add AmazonEKSWorkerNodePolicy, search for cni and add AMAZONEKS*CNI_Policy, search for ec2container and add AMAZONEC2ContainerRegistryReadOnly. Then click on \_Next:Tags*, then _Next:Review_, make sure the 3 policies are there then name the role eksNodeGroup and click _create role_
+
+step2:  
+Pick the kind of EC2 instances that will be launched and managed by EKS. Keep the default AMI type and pick a cheap instance type, t3.small (don't use the micro instance, it might cause errors)
+
+Pick our scaling policy, we'll keep with 2, the default. Click _next_
+
+step3:  
+we can dissallow remote access to nodes (means we can't connect through ssh to the nodes), click _next_
+
+step4:  
+click _create_, this will spin up a couple EC2 instances and add them to our cluster, it will also install all the K8s software required on these nodes and add them to the cluster network. That's the part we would have to do manually otherwise
+
+On the EC2 service pages, we can see our running EC2 instances, we also see that at the moment there's no load balancer
+
+#### Applying Our Kubernetes Config
+
+As we've seen before, `kubectl` is now linked to our AWS EKS custer, so we can just run `kubectl apply -f=auth.yaml -f=users.yaml`
+
+`kubectl get services` lists our two services, we can also see an EXTERNAL-IP associated with the users-service than we can use to send requests to with Postman
+
+On the EC2 service pages, we can see we now have a load balancer that was creaued automatically by AWS because we depload the services
+
+#### Getting Started with Volumes
+
+#### Adding EFS as a Volume (with the CSI Volume Type)
+
+#### Creating a Persistent Volume for EFS
+
+#### Using the EFS Volume
