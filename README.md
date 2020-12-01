@@ -2309,4 +2309,113 @@ spec:
 
 We can now test the task API with Postman, GET to localhost:8000/tasks, add a header "Authorization" "Bearer abc"; we'll get `Loading the tasks failed.` initially because there are no tasks, add one with a POST request to the same address and then the GET route will work
 
+#### Adding a Containerized Frontend
+
+We'll work with `18-kub-network-fe` for this section, we've now added a react frontend to the app.
+
+In the `App.js` file we're fetching from the backend in two places. The domain we're fetching from is http://localhost:8000/tasks, we get it by doing a `kubectl get services`. We also need ot add the beared token with the request
+
+We have a multistage setup for the frontend, build the app then use nginx to serve it, `docker build -t kevinlabtani/kub-demo-frontend .`
+
+Let's test it locally without K8s to test it, `docker run -p 80:80 --rm -d kevinlabtani/kub-demo-frontend`. It works but we have a CORS error when we try to fetch from the backend. We need to update the tasks api `task-app.js` file and set the right headers
+
+```js
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST,GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  next();
+});
+```
+
+The we rebuild, repush the tasks image and then delete and reapply the task deployment; it now works alright.(we do need at least one task in the backend though since it's a very basic frontend app)
+
+We now want to serve this frontend by our cluster, in a new pod (and a new deployment)
+
+`frontend-deployment.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: kevinlabtani/kub-demo-frontend:latest
+```
+
+`frontend-service.yaml`
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  selector:
+    app: frontend
+  type: LoadBalancer
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+```
+
+`kubectl apply -f=frontend-deployment.yaml -f=frontend-service.yaml`
+
+We can now reach our frontend at http://localhost:80
+
+We now want to add a reverse proxy for the frontend so that we don't have to hardcode the address for the fetch in our frontend `App.js`
+
+We want to send the request to ourselves, that is, the nginx server that serves our react frontend, we can modify `nginx.conf` to both serve our frontend but also redirect requests to a specific domain if they target a specific path
+
+old `nginx.conf`
+
+```conf
+server {
+  listen 80;
+
+  location / {
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    try_files $uri $uri/ /index.html =404;
+  }
+
+  include /etc/nginx/extra-conf.d/*.conf;
+}
+```
+
+new `nginx.conf`
+
+```conf
+server {
+  listen 80;
+
+  location /api/ {
+    proxy_pass http://tasks-service.default:8000/;
+  }
+
+  location / {
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    try_files $uri $uri/ /index.html =404;
+  }
+
+  include /etc/nginx/extra-conf.d/*.conf;
+}
+```
+
+In `nginx.conf` we can use `http://tasks-service.default:8000/` for the `proxy_pass`. The `nginx.conf` is executed on our cluster, so we can't use `http://localhost:8000` anymore, so we're using cluster internal ip addresses, or auto generated domain name  
+In `App.js` we can now send the fetch requests to `/api/tasks`. Then rebuild, repush and reapply. We can see our app now works without errors.
+
 ### Deploying a Kubernetes Cluster
