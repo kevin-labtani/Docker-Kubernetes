@@ -2516,10 +2516,92 @@ As we've seen before, `kubectl` is now linked to our AWS EKS custer, so we can j
 
 On the EC2 service pages, we can see we now have a load balancer that was creaued automatically by AWS because we depload the services
 
+If we make a change, we can just reapply the `.yaml` files
+
+reminder: pods are the thing that contains containers and run on nodes, they will be distributed by K8s accross the available nodes, 2 in this cases. Nodes are not started with replicas, nodes and configured with node groups in the EKS console
+
+nb: cluster internal communication (ie. using `auth-service.default`) works just fine even on EKS! `kubectl get namespaces` show we have a default namespace created by EKS
+
 #### Getting Started with Volumes
+
+We'll now modify the app so that the users API writes to a folder, now we need a volume to persist that data
+
+We can add the volume directly, or we could setup a persistent volume ressource and create a persistent volume claim, we'll do the later
+
+As we've seen, hostPath volumes aren't doable here, as we got more than one node, and a hostPath would only be created on one node and not the other, and we don't have control on which node the hostPath xwould be created, adn even if we did, different nodes would have different data!
+
+We'll use the CSI volume type, specifically, AWS EFS CSI
 
 #### Adding EFS as a Volume (with the CSI Volume Type)
 
+Check the [github](https://github.com/kubernetes-sigs/aws-efs-csi-driver) for the driver. We need to run `kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=release-1.0"` to deploy the stable driver in our cluster
+
+First, go to EC2 console and to _security groups_, click on _create security group_, name it eks-efs, pick the eksVpc we created. Add an _inbound rule_, pick _NFS_ with _Custom source_ and add the ip we get by going to the VPC service page and go to our eksVPC to get the _IPv4 CIDR_. Click _Create security group_
+
+We now need to create an EFS, search for it in the AWS console and click _Create file system_, name it eks-efs, pick the eksVps as VPC then click on _Customize_. On step2 - Network access - remove the security groups and pick our newly created eks-efs, then click through to _Create_. Copy and save the _File system ID_
+
 #### Creating a Persistent Volume for EFS
 
+We need to add a persistent volume to the `users.yaml`. We also need to add an empty users folder to our users api so that we can write to it. `volumeHandle` is the _File system ID_. `storageClassName: efs-sc` also need to be added as it's a custom one that doesn't exist yet (`kubectl get sc` to list all storage classes)
+
+```yaml
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: efs-sc
+provisioner: efs.csi.aws.com
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: efs-pv
+spec:
+  capacity:
+    storage: 5Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  csi:
+    driver: efs.csi.aws.com
+    volumeHandle: fs-59d14521
+```
+
+We then need to claim this volume, in the deployment ressource:
+
+```yaml
+volumes:
+  - name: efs-vol
+    persistentVolumeClaim:
+      claimName: efs-pvc
+```
+
+And add the persistent volume claim itself
+
+```yaml
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: efs-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 5Gi
+---
+
+```
+
 #### Using the EFS Volume
+
+We need to rebuild, and push the users API image since we modified it.  
+We then need to delete the users deployment `kubectl delete deployment users-deployment` and reapply `kubectl apply -f=users.yaml`
+
+We can now test the app with Postman
+
+In the EFS console, click on the file system we created and go to the _Monitoring_ tab, we'll see some write access since we added some data with Postman, we also see 3 client connections (since we have 3 replicas of the pod)
+
+If we shutdown all pods by setting the nr of replicas to 0, and then rechange it to 3 to create new pods, we can see that our log data persists since our volume works.
