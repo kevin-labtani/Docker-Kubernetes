@@ -1,6 +1,6 @@
 ## Présentation du Projet
 
-Projet créé le 12 Novembre 2020, dans le but de'apprendre à utiliser Docker.
+Projet créé le 12 Novembre 2020, dans le but d'apprendre à utiliser Docker.
 
 Le projet est basé sur le cours de Docker de [Academind](https://www.udemy.com/course/docker-kubernetes-the-practical-guide/)
 
